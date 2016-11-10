@@ -4,6 +4,10 @@
 
 #include "common.fxh"
 
+#define PI (3.14159265)
+#define G (9.8)
+#define PHASE (PI*2)
+
 // Application constants (updated each frame)
 cbuffer UpdatePerFrame : register(b0)
 {
@@ -32,8 +36,10 @@ float timerScale2 		<String uiname="Timer Scale 2"; 	float UIMin = 0.0; float UI
 //float sun_strength;
 //float reflrefr_offset;
 //bool diffuseSkyRef;
-float A = 0.1;	// amplitude
-float L = 2.5;	// wavelength
+float amplitude = 0.1;	// amplitude
+float waveLength = 2.5;	// wavelength
+float crestFactor;
+int waveCount = 3;
 
 Texture2D normalMap;
 Texture2D noiseMap;
@@ -85,12 +91,99 @@ struct vertex2pixel
 	float3 positionW		: TEXCOORD5;
 	float3 screenPos 		: TEXCOORD6;
 	float2 cubeCoord		: TEXCOORD7;
-}; 
+};
 
+struct WAVE
+{
+    float2 dir;
+    float length;
+    float amp;
+};
+
+Buffer<WAVE> waveBuffer : register(t0);
+
+struct WAVE_SUM
+{
+    float3 pos;
+    //float3 norm;
+};
+
+/*
+WAVE_SUM GerstnerWaveSum(float2 pos, Buffer<WAVE> waves, int n)
+{
+    WAVE_SUM sum;
+    for(int i = 0; i < n; ++i)
+    {
+        WAVE wave = waves[i];
+        float freq = sqrt(G * 2 * PI / wave.length);
+        float q = 1/(wave.amp * freq * n) * crestFactor;        
+        float tmp = q * wave.amp * cos(dot(freq * wave.dir, pos) + PHASE * globalTimer);
+        sum.pos += float3( tmp * wave.dir.x, wave.amp * sin(dot(freq * wave.dir, pos) + PHASE * globalTimer), tmp * wave.dir.y );
+        tmp = freq * dot(wave.dir, pos) + PHASE * globalTimer;
+        float s = sin(tmp);
+        float c = cos(tmp);
+        sum.norm += float3(wave.dir.x * freq * wave.amp * c, q * freq * wave.amp * s, wave.dir.y * freq * wave.amp * c);
+    }
+    sum.pos.x += pos.x;
+    sum.pos.z += pos.y;
+    sum.norm.x = -sum.norm.x;
+    sum.norm.z = -sum.norm.z;
+    sum.norm.y = 1 - sum.norm.y;
+    sum.norm = normalize(sum.norm);
+    return sum;
+}
+
+vertex2pixel vertexNormalMap(app2vertex In)
+{
+	vertex2pixel Out = (vertex2pixel)0;
+	//Out.worldNormal = mul(In.normal, WorldInverseTranspose).xyz;	
+	Out.worldTangent = mul(In.tangent, WorldInverseTranspose).xyz;	
+	Out.worldBinormal = mul(In.binormal, WorldInverseTranspose).xyz;
+    float3 worldSpacePos = mul(In.position, World);
+    //Out.positionW = worldSpacePos;
+    Out.texCoord0 = In.texCoord0;
+    //Out.texCoord0.xy += (globalTimer*timerScale1);
+    //Out.cubeCoord = In.texCoord1;
+
+    //Out.position = mul(In.position, WorldViewProjection);	
+	Out.viewVec = ViewInverse[3] - worldSpacePos;
+
+	WAVE_SUM waveSum = GerstnerWaveSum(In.position.xz, waveBuffer, waveCount);
+	//Out.position = mul(In.position, WorldViewProjection);
+	Out.position = mul(float4(waveSum.pos, 1), WorldViewProjection);
+    Out.worldNormal = mul(float4(waveSum.norm, 1), World).xyz;
+    Out.positionW = mul(float4(waveSum.pos, 1), World).xyz;
+	return Out;
+}*/
 
 /**************************************/
 /***** VERTEX SHADER ******************/
 /**************************************/
+
+float3 gerstnerWave(float3 position)
+{
+	//WAVE_SUM sum;
+	//for(int i = 0; i < waveCount; ++i)
+	//{
+	// Gerstner Wave
+	//float3 normMap = normalMap.Sample(LinearSampler,  coord);
+	float w = 2*3.1416/waveLength;
+	float Q = 0.5;
+
+	//float amplitude = normMap.x;
+	
+	//float3 P0 = In.position.xyz;
+	float3 P0 = position.xyz;
+	float3 D = float3(0,0,1);
+	float dotD = dot(P0.xy, D.z);
+	float C = cos(w*dotD + globalTimer);
+	float S = sin(w*dotD + globalTimer);
+	float3 P = float3(P0.x + Q*amplitude*C*D.x, amplitude * S, P0.z + Q*amplitude*C*D.y);
+	//sum.pos += P;
+	//}
+	return P;
+}
+
 
 vertex2pixel vertexNormalMap(app2vertex In)
 { 
@@ -107,21 +200,14 @@ vertex2pixel vertexNormalMap(app2vertex In)
     //Out.position = mul(In.position, WorldViewProjection);	
 	Out.viewVec = ViewInverse[3] - worldSpacePos;
 
-	// Gerstner Wave
-	float w = 2*3.1416/L;
-	float Q = 0.5;
-	
-	float3 P0 = In.position.xyz;
-	float3 D = float3(0,0,1);
-	float dotD = dot(P0.xy, D.z);
-	float C = cos(w*dotD + globalTimer);
-	float S = sin(w*dotD + globalTimer);
-	float3 P = float3(P0.x + Q*A*C*D.x, A * S, P0.z + Q*A*C*D.y);
+	//WAVE_SUM waveSum = gerstnerWave(In.position);
+	float3 wavePos = gerstnerWave(In.position);
+	Out.position = mul(float4(wavePos,1), WorldViewProjection);
 
-	Out.position = mul(float4(P,1), WorldViewProjection);
-	float4 wave1 = mul(float4(P,1), WorldViewProjection);
-	float4 wave2 = mul(float4(-P,1), WorldViewProjection);
-	float4 total = wave1 + wave2;
+	//Out.position = mul(float4(P,1), WorldViewProjection);
+	//float4 wave1 = mul(float4(P,1), WorldViewProjection);
+	//float4 wave2 = mul(float4(-P,1), WorldViewProjection);
+	//float4 total = wave1 + wave2;
 	//Out.position = total;
 
 	//Out.position.x = sin(Out.position.x + (cos(Out.position.y)) + 1);
@@ -137,7 +223,7 @@ vertex2pixel vertexNormalMap(app2vertex In)
     //Out.screenPos.xy = 0.5 + 0.5*Out.screenPos.xy*float2(1,-1);
     //Out.screenPos.z = reflrefr_offset/Out.screenPos.z; // reflrefr_offset controls
     return Out; 
-} 
+}
 
 /**************************************/
 /***** PIXEL SHADER *******************/
@@ -202,6 +288,7 @@ float4 pixel(vertex2pixel input, uniform int debugOutput) : SV_TARGET
     //float4 result =  color +  lerp(color, skyrefl, fresnel) ;
     //result.a = 1;
 
+    /*
     // Trying out new spec calc
     float3 eyeVecNorm = normalize(V);
     float3x3 tangentFrame = compute_tangent_frame(input.worldNormal, eyeVecNorm, input.texCoord0);
@@ -211,6 +298,7 @@ float4 pixel(vertex2pixel input, uniform int debugOutput) : SV_TARGET
 	float dotSpec = saturate(dot(mirrorEye.xyz, -light0Dir) * 0.5 + 0.5);
 	//float4 specular = (1.0 - fresnel) * saturate(-light0Dir.y) * ((pow(dotSpec, 512.0)) * (specIntensity * 1.8 + 0.2));
 	//specular += specular * 25 * saturate(specIntensity - 0.05);
+	*/
 
 	color.rgb = color.rgb * light0Intensity * light0Color;
 	float diffLight = saturate(dot(bumpWorld, light0Dir));
@@ -263,7 +351,7 @@ Texture2D reflectionTexture;
 Texture2D refractionTexture;
 Texture2D normalTexture;
 SamplerState samLinear;
-// A pass-through function for the (interpolated) color data.
+// amplitude pass-through function for the (interpolated) color data.
 float4 main(PixelShaderInput input) : SV_TARGET
 {	
 	float2 reflectTexCoord;
