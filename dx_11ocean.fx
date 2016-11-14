@@ -38,8 +38,10 @@ float timerScale2 		<String uiname="Timer Scale 2"; 	float UIMin = 0.0; float UI
 //bool diffuseSkyRef;
 float amplitude = 0.1;	// amplitude
 float waveLength = 2.5;	// wavelength
-float crestFactor;
+float crestFactor <String uiname="Crest Factor"; float UIMin = 0.0; float UIMax = 5.0; float UIStep = 0.01;> = 0.2;
 int waveCount = 3;
+
+static const float2x2 octave_m = float2x2(1.6,1.2,-1.2,1.1);
 
 Texture2D normalMap;
 Texture2D noiseMap;
@@ -160,27 +162,56 @@ vertex2pixel vertexNormalMap(app2vertex In)
 /***** VERTEX SHADER ******************/
 /**************************************/
 
+// original noise and trace functions from https://www.shadertoy.com/view/Ms2SD1
+
+float hash( float2 p ) 
+{
+	float h = dot(p,float2(127.1,311.7));	
+    return frac(sin(h)*43758.5453123);
+}
+
+float customNoise( float2 p ) 
+{
+    float2 i = floor( p );
+    float2 f = frac( p );	
+	float2 u = f*f*(3.0-2.0*f);
+    return -1.0+2.0*lerp( lerp( hash( i + float2(0.0,0.0) ),
+    							hash( i + float2(1.0,0.0) ), u.x),
+        						lerp( hash( i + float2(0.0,1.0) ), 
+        						hash( i + float2(1.0,1.0) ), u.x), u.y);
+}
+
+float sea_octave(float2 uv, float choppy) 
+{
+    uv += customNoise(uv);        
+    float2 wv = 1.0-abs(sin(uv));
+    float2 swv = abs(cos(uv));    
+    wv = lerp(wv,swv,wv);
+    return pow(1.0-pow(wv.x * wv.y,0.65),choppy);
+}
+
+float rand(float2 co)
+{
+    return frac(sin(dot(co.xy ,float2(12.9898,78.233))) * 43758.5453);
+}
+
 float3 gerstnerWave(float3 position)
 {
-	//WAVE_SUM sum;
-	//for(int i = 0; i < waveCount; ++i)
-	//{
-	// Gerstner Wave
-	//float3 normMap = normalMap.Sample(LinearSampler,  coord);
-	float w = 2*3.1416/waveLength;
-	float Q = 0.5;
+	float a = hash(position.xy);
+	float b = hash(position.yz);
+	float c = customNoise(position.xy)/waveLength;
+	float d = sea_octave(position.xy, 1.25);
+	float w = 2*PI/waveLength;
+	//float w = 2*3.1416/(a/waveLength);
+	float amp = amplitude;
 
-	//float amplitude = normMap.x;
-	
-	//float3 P0 = In.position.xyz;
+	float Q = 0.5;
 	float3 P0 = position.xyz;
-	float3 D = float3(0,0,1);
-	float dotD = dot(P0.xy, D.z);
+	float3 D = float3(0,crestFactor,1);
+	float dotD = dot(P0.yz, D.z); // Direction
 	float C = cos(w*dotD + globalTimer);
 	float S = sin(w*dotD + globalTimer);
-	float3 P = float3(P0.x + Q*amplitude*C*D.x, amplitude * S, P0.z + Q*amplitude*C*D.y);
-	//sum.pos += P;
-	//}
+	float3 P = float3(P0.x + Q*amp*C*D.x, amp * S, P0.z + Q*amp*C*D.y);
 	return P;
 }
 
@@ -199,29 +230,24 @@ vertex2pixel vertexNormalMap(app2vertex In)
 
     //Out.position = mul(In.position, WorldViewProjection);	
 	Out.viewVec = ViewInverse[3] - worldSpacePos;
-
-	//WAVE_SUM waveSum = gerstnerWave(In.position);
+	float3 sum = float3(0, 0, 0);
+	float sumy;
+	for(int i=0; i<3; i++)
+	{
+		sum += gerstnerWave(In.position);
+		//float p = clamp(customNoise(sum.xz), -0.1, 0.1);
+		//float p = clamp(sea_octave(sum.xz, amplitude), -1, 1);
+		float p = dot(customNoise(sum.xz), In.position.y);
+		sumy += p;
+	}
 	float3 wavePos = gerstnerWave(In.position);
+	//float wavePosY = customNoise(wavePos);
+	//float plusY = sea_octave(In.position.xy, 1.0);
+	//float2 wavePosXY = hash(In.position.xy);
+	//float wavePosY = wavePosXY.y;
+	//wavePos.y += wavePosY;
+	wavePos.y += sumy;
 	Out.position = mul(float4(wavePos,1), WorldViewProjection);
-
-	//Out.position = mul(float4(P,1), WorldViewProjection);
-	//float4 wave1 = mul(float4(P,1), WorldViewProjection);
-	//float4 wave2 = mul(float4(-P,1), WorldViewProjection);
-	//float4 total = wave1 + wave2;
-	//Out.position = total;
-
-	//Out.position.x = sin(Out.position.x + (cos(Out.position.y)) + 1);
-	//Out.position.y = cos(Out.position.y + (sin(Out.position.x)) + 1);
-
-	//New stuff
-
-    // alt screenpos
-    // this is the screenposition of the undisplaced vertices (assuming the plane is y=0)
-    // it is used for the reflection/refraction lookup
-    //float4 tpos = mul(float4(In.position.x,0,In.position.z,1), WorldInverseTranspose);
-    //Out.screenPos = tpos.xyz/tpos.w;
-    //Out.screenPos.xy = 0.5 + 0.5*Out.screenPos.xy*float2(1,-1);
-    //Out.screenPos.z = reflrefr_offset/Out.screenPos.z; // reflrefr_offset controls
     return Out; 
 }
 
