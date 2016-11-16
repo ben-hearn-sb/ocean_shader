@@ -141,18 +141,18 @@ float3 gerstnerWave(float3 position, float multiplier)
 	float dotD = dot(P0.yz, D.z); // Direction
 	float C = cos(w*dotD + globalTimer);
 	float S = sin(w*dotD + globalTimer);
-	float3 P = float3(P0.x + Q*amp*C*D.x, amp * S, P0.z + Q*amp*C*D.y);
+	float3 P = float3(Q*amp*C*D.x, amp * S,Q*amp*C*D.y);
 	return P;
 }
 
 float3 waveFunction(float3 position)
 {
 	float w = 2*PI/waveLength;
-	float myPhase = speed * PHASE/waveLength;
+	float myPhase = speed * 2*PI/waveLength;
 	float2 waveDir = float2(dirX, dirY);
-	float dotD = dot(waveDir, position.xy);
-	float C = sin(dotD * w + globalTimer * myPhase);
-	return float3(amplitude * C, amplitude * myPhase, amplitude*C);
+	float dotY = dot(waveDir, position.xz);
+	float Y = amplitude * sin(dotY * w + (globalTimer * myPhase));
+	return float3(0, Y, 0);
 }
 
 vertex2pixel vertexNormalMap(app2vertex In)
@@ -171,13 +171,23 @@ vertex2pixel vertexNormalMap(app2vertex In)
 	Out.viewVec = ViewInverse[3] - worldSpacePos;
 
 	float3 sum = float3(0,0,0);
-	for(i=0; i < 3; i++)
+	float h = 0.0;
+	for(int i=0; i < 3; i++)
 	{
-		sum += gerstnerWave(In.position, i);
+		//sum = gerstnerWave(In.position+globalTimer, i);
+		//sum = gerstnerWave(In.position+globalTimer, i);
+		//sum += gerstnerWave(In.position-globalTimer, i);
+		sum += waveFunction(In.position);
 	}
+	sum += In.position;
 	
-	//float3 wavePos = gerstnerWave(In.position);
+	//float3 wavePos = gerstnerWave(In.position, 1);
+	//float3 wavePos = waveFunction(worldSpacePos);
+	//float3 wavePos = amplitude * sin;
+	//Out.position = float4(sum,1);
 	//Out.position.y = wavePos.z;
+	//wavePos.y += sum.y;
+	//wavePos.y *= 10;
 	Out.position = mul(float4(sum,1), WorldViewProjection);
     return Out; 
 }
