@@ -6,7 +6,7 @@
 
 #define PI (3.14159265)
 #define G (9.8)
-#define PHASE (PI*2)
+#define PHASE (2*PI)
 
 // Application constants (updated each frame)
 cbuffer UpdatePerFrame : register(b0)
@@ -38,8 +38,10 @@ float timerScale2 		<String uiname="Timer Scale 2"; 	float UIMin = 0.0; float UI
 //bool diffuseSkyRef;
 float amplitude = 0.1;	// amplitude
 float waveLength = 2.5;	// wavelength
-float crestFactor <String uiname="Crest Factor"; float UIMin = 0.0; float UIMax = 5.0; float UIStep = 0.01;> = 0.2;
 int waveCount = 3;
+float speed = 2.1;
+float dirX = 1.0;
+float dirY = 0.0;
 
 static const float2x2 octave_m = float2x2(1.6,1.2,-1.2,1.1);
 
@@ -95,69 +97,6 @@ struct vertex2pixel
 	float2 cubeCoord		: TEXCOORD7;
 };
 
-struct WAVE
-{
-    float2 dir;
-    float length;
-    float amp;
-};
-
-Buffer<WAVE> waveBuffer : register(t0);
-
-struct WAVE_SUM
-{
-    float3 pos;
-    //float3 norm;
-};
-
-/*
-WAVE_SUM GerstnerWaveSum(float2 pos, Buffer<WAVE> waves, int n)
-{
-    WAVE_SUM sum;
-    for(int i = 0; i < n; ++i)
-    {
-        WAVE wave = waves[i];
-        float freq = sqrt(G * 2 * PI / wave.length);
-        float q = 1/(wave.amp * freq * n) * crestFactor;        
-        float tmp = q * wave.amp * cos(dot(freq * wave.dir, pos) + PHASE * globalTimer);
-        sum.pos += float3( tmp * wave.dir.x, wave.amp * sin(dot(freq * wave.dir, pos) + PHASE * globalTimer), tmp * wave.dir.y );
-        tmp = freq * dot(wave.dir, pos) + PHASE * globalTimer;
-        float s = sin(tmp);
-        float c = cos(tmp);
-        sum.norm += float3(wave.dir.x * freq * wave.amp * c, q * freq * wave.amp * s, wave.dir.y * freq * wave.amp * c);
-    }
-    sum.pos.x += pos.x;
-    sum.pos.z += pos.y;
-    sum.norm.x = -sum.norm.x;
-    sum.norm.z = -sum.norm.z;
-    sum.norm.y = 1 - sum.norm.y;
-    sum.norm = normalize(sum.norm);
-    return sum;
-}
-
-vertex2pixel vertexNormalMap(app2vertex In)
-{
-	vertex2pixel Out = (vertex2pixel)0;
-	//Out.worldNormal = mul(In.normal, WorldInverseTranspose).xyz;	
-	Out.worldTangent = mul(In.tangent, WorldInverseTranspose).xyz;	
-	Out.worldBinormal = mul(In.binormal, WorldInverseTranspose).xyz;
-    float3 worldSpacePos = mul(In.position, World);
-    //Out.positionW = worldSpacePos;
-    Out.texCoord0 = In.texCoord0;
-    //Out.texCoord0.xy += (globalTimer*timerScale1);
-    //Out.cubeCoord = In.texCoord1;
-
-    //Out.position = mul(In.position, WorldViewProjection);	
-	Out.viewVec = ViewInverse[3] - worldSpacePos;
-
-	WAVE_SUM waveSum = GerstnerWaveSum(In.position.xz, waveBuffer, waveCount);
-	//Out.position = mul(In.position, WorldViewProjection);
-	Out.position = mul(float4(waveSum.pos, 1), WorldViewProjection);
-    Out.worldNormal = mul(float4(waveSum.norm, 1), World).xyz;
-    Out.positionW = mul(float4(waveSum.pos, 1), World).xyz;
-	return Out;
-}*/
-
 /**************************************/
 /***** VERTEX SHADER ******************/
 /**************************************/
@@ -190,24 +129,15 @@ float sea_octave(float2 uv, float choppy)
     return pow(1.0-pow(wv.x * wv.y,0.65),choppy);
 }
 
-float rand(float2 co)
+float3 gerstnerWave(float3 position, float multiplier)
 {
-    return frac(sin(dot(co.xy ,float2(12.9898,78.233))) * 43758.5453);
-}
-
-float3 gerstnerWave(float3 position)
-{
-	float a = hash(position.xy);
-	float b = hash(position.yz);
-	float c = customNoise(position.xy)/waveLength;
-	float d = sea_octave(position.xy, 1.25);
+	float wL = hash(position.xy);
 	float w = 2*PI/waveLength;
-	//float w = 2*3.1416/(a/waveLength);
 	float amp = amplitude;
 
 	float Q = 0.5;
 	float3 P0 = position.xyz;
-	float3 D = float3(0,crestFactor,1);
+	float3 D = float3(0,0,1);
 	float dotD = dot(P0.yz, D.z); // Direction
 	float C = cos(w*dotD + globalTimer);
 	float S = sin(w*dotD + globalTimer);
@@ -215,6 +145,15 @@ float3 gerstnerWave(float3 position)
 	return P;
 }
 
+float3 waveFunction(float3 position)
+{
+	float w = 2*PI/waveLength;
+	float myPhase = speed * PHASE/waveLength;
+	float2 waveDir = float2(dirX, dirY);
+	float dotD = dot(waveDir, position.xy);
+	float C = sin(dotD * w + globalTimer * myPhase);
+	return float3(amplitude * C, amplitude * myPhase, amplitude*C);
+}
 
 vertex2pixel vertexNormalMap(app2vertex In)
 { 
@@ -230,24 +169,16 @@ vertex2pixel vertexNormalMap(app2vertex In)
 
     //Out.position = mul(In.position, WorldViewProjection);	
 	Out.viewVec = ViewInverse[3] - worldSpacePos;
-	float3 sum = float3(0, 0, 0);
-	float sumy;
-	for(int i=0; i<3; i++)
+
+	float3 sum = float3(0,0,0);
+	for(i=0; i < 3; i++)
 	{
-		sum += gerstnerWave(In.position);
-		//float p = clamp(customNoise(sum.xz), -0.1, 0.1);
-		//float p = clamp(sea_octave(sum.xz, amplitude), -1, 1);
-		float p = dot(customNoise(sum.xz), In.position.y);
-		sumy += p;
+		sum += gerstnerWave(In.position, i);
 	}
-	float3 wavePos = gerstnerWave(In.position);
-	//float wavePosY = customNoise(wavePos);
-	//float plusY = sea_octave(In.position.xy, 1.0);
-	//float2 wavePosXY = hash(In.position.xy);
-	//float wavePosY = wavePosXY.y;
-	//wavePos.y += wavePosY;
-	wavePos.y += sumy;
-	Out.position = mul(float4(wavePos,1), WorldViewProjection);
+	
+	//float3 wavePos = gerstnerWave(In.position);
+	//Out.position.y = wavePos.z;
+	Out.position = mul(float4(sum,1), WorldViewProjection);
     return Out; 
 }
 
