@@ -4,6 +4,10 @@
 
 #include "common.fxh"
 
+#define PI (3.14159265)
+#define G (9.8)
+#define PHASE (2*PI)
+
 // Application constants (updated each frame)
 cbuffer UpdatePerFrame : register(b0)
 {
@@ -20,20 +24,20 @@ cbuffer UpdatePerObject :register(b1)
 }
 
 //dx11 style
-//float4 light0Color 		<String uiname="light0Color"; bool color=true;> = { 1.0f,1.0f,1.0f,1.0f };
 float4 waterColorA 		<String uiname="Water Color A"; bool color=true;> = { 1.0f,1.0f,1.0f,1.0f };
 float tile 				<String uiname="Tile";> = 1.0f;
 float specIntensity 	<String uiname="Spec Intensity"; 	float UIMin = 0.0; float UIMax = 10.0; float UIStep = 0.01;> = 0.5;
 float timerScale1 		<String uiname="Timer Scale 1"; 	float UIMin = 0.0; float UIMax = 1.0; float UIStep = 0.01;> = 0.2;
 float timerScale2 		<String uiname="Timer Scale 2"; 	float UIMin = 0.0; float UIMax = 1.0; float UIStep = 0.01;> = 0.2;
-//float sun_alfa;
-//float sun_theta;
-//float sun_shininess;
-//float sun_strength;
-//float reflrefr_offset;
-//bool diffuseSkyRef;
-float A = 0.1;	// amplitude
-float L = 2.5;	// wavelength
+float amplitude = 0.1;	// amplitude
+float waveLength = 2.5;	// wavelength
+int waveCount = 3;
+float speed = 2.1;
+float dirX = 1.0;
+float dirY = 0.0;
+float crestFactor;
+
+static const float2x2 octave_m = float2x2(1.6,1.2,-1.2,1.1);
 
 Texture2D normalMap;
 Texture2D noiseMap;
@@ -85,59 +89,189 @@ struct vertex2pixel
 	float3 positionW		: TEXCOORD5;
 	float3 screenPos 		: TEXCOORD6;
 	float2 cubeCoord		: TEXCOORD7;
-}; 
-
+};
 
 /**************************************/
 /***** VERTEX SHADER ******************/
 /**************************************/
 
+// original noise and trace functions from https://www.shadertoy.com/view/Ms2SD1
+
+float hash( float2 p ) 
+{
+	float h = dot(p,float2(127.1,311.7));	
+    return frac(sin(h)*43758.5453123);
+}
+
+float customNoise( float2 p ) 
+{
+    float2 i = floor( p );
+    float2 f = frac( p );	
+	float2 u = f*f*(3.0-2.0*f);
+    return -1.0+2.0*lerp( lerp( hash( i + float2(0.0,0.0) ),
+    							hash( i + float2(1.0,0.0) ), u.x),
+        						lerp( hash( i + float2(0.0,1.0) ), 
+        						hash( i + float2(1.0,1.0) ), u.x), u.y);
+}
+
+float3 gerstnerNormal(float3 position, float multiplier, float2 direction)
+{
+	float amp = amplitude*0.025;
+	amp *= multiplier;
+
+	float WL = waveLength;
+	WL *= multiplier;
+
+	float2 D = direction;
+	float w = 2*PI/WL;
+	float Q = crestFactor;
+	float3 P0 = position.xyz;
+	float myPhase = speed * 2*PI/WL;
+
+	float dotX = dot(D, P0.x);
+	float dotY = dot(D, P0.y);
+	float dotP = dot(D, P0);
+
+	float C = cos(w*dotP + (globalTimer*myPhase));
+	float S = sin(w*dotP + (globalTimer*myPhase));
+	float WA = w*amp;
+
+	//float3 N = float3(dotX*WA*C, Q*WA*S, dotY*WA*C);
+	float3 N = float3(dotX*WA*C, Q*WA*S, dotY*WA*C);
+	return N;
+}
+
+float3 gerstnerTangent(float3 position, float multiplier, float2 direction)
+{
+	float amp = amplitude*0.025;
+	amp *= multiplier;
+
+	float WL = waveLength;
+	WL *= multiplier;
+
+	float2 D = direction;
+	float w = 2*PI/WL;
+	float Q = crestFactor;
+	float3 P0 = position.xyz;
+	float myPhase = speed * 2*PI/WL;
+
+	float dotX = dot(D, P0.x);
+	float dotY = dot(D, P0.y);
+	float powDotY = dot(D, pow(P0.y, 2));
+	float dotP = dot(D, P0);
+
+	float C = cos(w*dotP + (globalTimer*myPhase));
+	float S = sin(w*dotP + (globalTimer*myPhase));
+	float WA = w*amp;
+
+	float3 T = float3(Q*dotX*dotY*WA*S, dotY*WA*C, Q*powDotY*WA*S);
+	return T;
+}
+
+float3 gerstnerBinormal(float3 position, float multiplier, float2 direction)
+{
+	float amp = amplitude*0.025;
+	amp *= multiplier;
+
+	float WL = waveLength;
+	WL *= multiplier;
+
+	float2 D = direction;
+	float w = 2*PI/WL;
+	float Q = crestFactor;
+	float3 P0 = position.xyz;
+	float myPhase = speed * 2*PI/WL;
+
+	float dotX = dot(D, P0.x);
+	float dotY = dot(D, P0.y);
+	float powDotX = dot(D, pow(P0.x, 2));
+	float dotP = dot(D, P0);
+
+	float C = cos(w*dotP + (globalTimer*myPhase));
+	float S = sin(w*dotP + (globalTimer*myPhase));
+	float WA = w*amp;
+
+	float3 B = float3(Q*powDotX*WA*S, dotX*WA*C, Q*dotX*dotY*WA*S);
+	return B;
+}
+
+float3 gerstnerWave(float3 position, float multiplier, float2 direction)
+{
+	// Put te vars in a struct!!
+	float amp = amplitude*0.025;
+	amp *= multiplier;
+	
+	float WL = waveLength;
+	WL *= multiplier;
+
+	float2 D = direction;
+
+	float w = 2*PI/WL;
+	float Q = crestFactor;
+	float3 P0 = position.xyz;
+	float myPhase = speed * 2*PI/WL;
+
+	float dotD = dot(D, P0.xz);
+	float C = cos(w*dotD + (globalTimer*myPhase));
+	float S = sin(w*dotD + (globalTimer*myPhase));
+	float3 P = float3(Q*amp*D.x*C, amp * S, Q*amp*D.y*C);
+	return P;
+}
+
+
+
+// Static for the time being... Need to make them a bit more dynamic
+static float mulArray[3] = {0.561,1.793,0.697};
+static float2 dirsArray[3] = {float2(1.0, 0.0), float2(1.0, 0.5), float2(0.0, 1.0)};
+
 vertex2pixel vertexNormalMap(app2vertex In)
 { 
 	vertex2pixel Out = (vertex2pixel)0;
-	Out.worldNormal = mul(In.normal, WorldInverseTranspose).xyz;	
-	Out.worldTangent = mul(In.tangent, WorldInverseTranspose).xyz;	
-	Out.worldBinormal = mul(In.binormal, WorldInverseTranspose).xyz;
+	//Out.worldBinormal = mul(In.binormal, WorldInverseTranspose).xyz;
+	//Out.worldTangent = mul(In.tangent, WorldInverseTranspose).xyz;	
+	//Out.worldNormal = mul(In.normal, WorldInverseTranspose).xyz;	
     float3 worldSpacePos = mul(In.position, World);
     Out.positionW = worldSpacePos;
     Out.texCoord0 = In.texCoord0;
     //Out.texCoord0.xy += (globalTimer*timerScale1);
     //Out.cubeCoord = In.texCoord1;
-
-    //Out.position = mul(In.position, WorldViewProjection);	
 	Out.viewVec = ViewInverse[3] - worldSpacePos;
 
-	// Gerstner Wave
-	float w = 2*3.1416/L;
-	float Q = 0.5;
-	
-	float3 P0 = In.position.xyz;
-	float3 D = float3(0,0,1);
-	float dotD = dot(P0.xy, D.z);
-	float C = cos(w*dotD + globalTimer);
-	float S = sin(w*dotD + globalTimer);
-	float3 P = float3(P0.x + Q*A*C*D.x, A * S, P0.z + Q*A*C*D.y);
+	float3 sumW = float3(0,0,0);
+	float3 sumB = float3(0,0,0);
+	float3 sumT = float3(0,0,0);
+	float3 sumN = float3(0,0,0);
+	for(int i=0; i < 3; i++)
+	{
+		float2 dirsXY = float2(dirX, dirY);
+		float2 dirsVal = dirsArray[i]*dirsXY;
+		float mulVal = mulArray[i]* customNoise(dirsVal);
+		//sumW += gerstnerWave(In.position, mulVal, dirsArray[i]);
+		sumW += gerstnerWave(In.position, mulArray[i], dirsArray[i]);
+		sumB += gerstnerBinormal(sumW, mulArray[i], dirsArray[i]);
+		sumT += gerstnerTangent(sumW, mulArray[i], dirsArray[i]);
+		sumN += gerstnerNormal(sumW, mulArray[i], dirsArray[i]);
+	}
 
-	Out.position = mul(float4(P,1), WorldViewProjection);
-	float4 wave1 = mul(float4(P,1), WorldViewProjection);
-	float4 wave2 = mul(float4(-P,1), WorldViewProjection);
-	float4 total = wave1 + wave2;
-	//Out.position = total;
+	// Calculate final pos, binorm, tangent and normal
+	sumW += In.position;
 
-	//Out.position.x = sin(Out.position.x + (cos(Out.position.y)) + 1);
-	//Out.position.y = cos(Out.position.y + (sin(Out.position.x)) + 1);
+	sumB.x = 1-sumB.x;
+	sumB.z = -sumB.z;
 
-	//New stuff
+	sumT.x = -sumT.x;
+	sumT.y = 1-sumT.y;
 
-    // alt screenpos
-    // this is the screenposition of the undisplaced vertices (assuming the plane is y=0)
-    // it is used for the reflection/refraction lookup
-    //float4 tpos = mul(float4(In.position.x,0,In.position.z,1), WorldInverseTranspose);
-    //Out.screenPos = tpos.xyz/tpos.w;
-    //Out.screenPos.xy = 0.5 + 0.5*Out.screenPos.xy*float2(1,-1);
-    //Out.screenPos.z = reflrefr_offset/Out.screenPos.z; // reflrefr_offset controls
+	sumN.x = -sumN.x;
+	sumN.y = 1-sumN.y;
+	sumN.z = -sumN.z;
+
+	Out.worldBinormal = mul(In.binormal + normalize(sumB), WorldInverseTranspose).xyz;
+	Out.worldTangent = mul(In.tangent 	+ normalize(sumT), WorldInverseTranspose).xyz;	
+	Out.worldNormal = mul(In.normal 	+ normalize(sumN), WorldInverseTranspose).xyz;
+	Out.position = mul(float4(sumW,1), WorldViewProjection);
     return Out; 
-} 
+}
 
 /**************************************/
 /***** PIXEL SHADER *******************/
@@ -202,6 +336,7 @@ float4 pixel(vertex2pixel input, uniform int debugOutput) : SV_TARGET
     //float4 result =  color +  lerp(color, skyrefl, fresnel) ;
     //result.a = 1;
 
+    /*
     // Trying out new spec calc
     float3 eyeVecNorm = normalize(V);
     float3x3 tangentFrame = compute_tangent_frame(input.worldNormal, eyeVecNorm, input.texCoord0);
@@ -211,6 +346,7 @@ float4 pixel(vertex2pixel input, uniform int debugOutput) : SV_TARGET
 	float dotSpec = saturate(dot(mirrorEye.xyz, -light0Dir) * 0.5 + 0.5);
 	//float4 specular = (1.0 - fresnel) * saturate(-light0Dir.y) * ((pow(dotSpec, 512.0)) * (specIntensity * 1.8 + 0.2));
 	//specular += specular * 25 * saturate(specIntensity - 0.05);
+	*/
 
 	color.rgb = color.rgb * light0Intensity * light0Color;
 	float diffLight = saturate(dot(bumpWorld, light0Dir));
@@ -263,7 +399,7 @@ Texture2D reflectionTexture;
 Texture2D refractionTexture;
 Texture2D normalTexture;
 SamplerState samLinear;
-// A pass-through function for the (interpolated) color data.
+// amplitude pass-through function for the (interpolated) color data.
 float4 main(PixelShaderInput input) : SV_TARGET
 {	
 	float2 reflectTexCoord;
@@ -282,5 +418,28 @@ float4 main(PixelShaderInput input) : SV_TARGET
 	float4 refractTex = refractionTexture.Sample(samLinear, refractTexCoord);
 	float4 final = lerp(reflectTex, refractTex, 0.6f);
 	return final * input.color;
+}
+
+// Simple sine wave function
+float3 waveFunction(float3 position)
+{
+	float amp = amplitude;
+	float wl = waveLength;
+
+	float w = 2*PI/waveLength;
+	float myPhase = speed * 2*PI/waveLength;
+	float2 waveDir = float2(dirX, dirY);
+	float dotY = dot(waveDir, position.xz);
+	float Y = amplitude * sin(dotY * w + (globalTimer * myPhase));
+	return float3(0, Y, 0);
+}
+
+float sea_octave(float2 uv, float choppy) 
+{
+    uv += customNoise(uv);        
+    float2 wv = 1.0-abs(sin(uv));
+    float2 swv = abs(cos(uv));    
+    wv = lerp(wv,swv,wv);
+    return pow(1.0-pow(wv.x * wv.y,0.65),choppy);
 }
 */
