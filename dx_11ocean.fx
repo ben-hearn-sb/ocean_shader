@@ -24,24 +24,18 @@ cbuffer UpdatePerObject :register(b1)
 }
 
 //dx11 style
-//float4 light0Color 		<String uiname="light0Color"; bool color=true;> = { 1.0f,1.0f,1.0f,1.0f };
 float4 waterColorA 		<String uiname="Water Color A"; bool color=true;> = { 1.0f,1.0f,1.0f,1.0f };
 float tile 				<String uiname="Tile";> = 1.0f;
 float specIntensity 	<String uiname="Spec Intensity"; 	float UIMin = 0.0; float UIMax = 10.0; float UIStep = 0.01;> = 0.5;
 float timerScale1 		<String uiname="Timer Scale 1"; 	float UIMin = 0.0; float UIMax = 1.0; float UIStep = 0.01;> = 0.2;
 float timerScale2 		<String uiname="Timer Scale 2"; 	float UIMin = 0.0; float UIMax = 1.0; float UIStep = 0.01;> = 0.2;
-//float sun_alfa;
-//float sun_theta;
-//float sun_shininess;
-//float sun_strength;
-//float reflrefr_offset;
-//bool diffuseSkyRef;
 float amplitude = 0.1;	// amplitude
 float waveLength = 2.5;	// wavelength
 int waveCount = 3;
 float speed = 2.1;
 float dirX = 1.0;
 float dirY = 0.0;
+float crestFactor;
 
 static const float2x2 octave_m = float2x2(1.6,1.2,-1.2,1.1);
 
@@ -129,24 +123,36 @@ float sea_octave(float2 uv, float choppy)
     return pow(1.0-pow(wv.x * wv.y,0.65),choppy);
 }
 
-float3 gerstnerWave(float3 position, float multiplier)
+float3 gerstnerWave(float3 position, float multiplier, float2 direction)
 {
-	float wL = hash(position.xy);
-	float w = 2*PI/waveLength;
-	float amp = amplitude;
 
-	float Q = 0.5;
+	float amp = amplitude;
+	amp *= multiplier;
+	
+	float WL = waveLength;
+	WL *= multiplier;
+
+	float2 D = direction;
+
+	float w = 2*PI/WL;
+	float Q = crestFactor;
 	float3 P0 = position.xyz;
-	float3 D = float3(0,0,1);
-	float dotD = dot(P0.yz, D.z); // Direction
+	//float2 D = float2(dirX,dirY);
+
+
+	float dotD = dot(P0.xz, D); // Direction
 	float C = cos(w*dotD + globalTimer);
 	float S = sin(w*dotD + globalTimer);
-	float3 P = float3(Q*amp*C*D.x, amp * S,Q*amp*C*D.y);
+	float3 P = float3(P0.x + Q*amp*C*D.x, amp * S, P0.z +Q*amp*C*D.y);
 	return P;
 }
 
+// Simple sine wave function
 float3 waveFunction(float3 position)
 {
+	float amp = amplitude;
+	float wl = waveLength;
+
 	float w = 2*PI/waveLength;
 	float myPhase = speed * 2*PI/waveLength;
 	float2 waveDir = float2(dirX, dirY);
@@ -154,6 +160,14 @@ float3 waveFunction(float3 position)
 	float Y = amplitude * sin(dotY * w + (globalTimer * myPhase));
 	return float3(0, Y, 0);
 }
+
+float mulArray[3] = {0.561,1.793,0.697};
+static float2 dirsArray[3] = 
+{
+	float2(1.0, 0.0), 
+	float2(1.0, 0.5), 
+	float2(0.0, 1.0)
+};
 
 vertex2pixel vertexNormalMap(app2vertex In)
 { 
@@ -172,22 +186,15 @@ vertex2pixel vertexNormalMap(app2vertex In)
 
 	float3 sum = float3(0,0,0);
 	float h = 0.0;
+
+
 	for(int i=0; i < 3; i++)
 	{
-		//sum = gerstnerWave(In.position+globalTimer, i);
-		//sum = gerstnerWave(In.position+globalTimer, i);
-		//sum += gerstnerWave(In.position-globalTimer, i);
-		sum += waveFunction(In.position);
+		//sum += waveFunction(In.position)
+		sum += gerstnerWave(In.position, mulArray[i], dirsArray[i]);
 	}
 	sum += In.position;
-	
-	//float3 wavePos = gerstnerWave(In.position, 1);
-	//float3 wavePos = waveFunction(worldSpacePos);
-	//float3 wavePos = amplitude * sin;
-	//Out.position = float4(sum,1);
-	//Out.position.y = wavePos.z;
-	//wavePos.y += sum.y;
-	//wavePos.y *= 10;
+	//float3 wavePos = gerstnerWave(In.position);
 	Out.position = mul(float4(sum,1), WorldViewProjection);
     return Out; 
 }
