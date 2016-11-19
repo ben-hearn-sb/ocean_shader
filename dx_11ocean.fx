@@ -36,9 +36,14 @@ float speed = 2.1;
 float dirX = 1.0;
 float dirY = 0.0;
 float crestFactor;
+float fresBias;
+float fresScale;
+float fresPower;
+float reflectPower;
 
 static const float2x2 octave_m = float2x2(1.6,1.2,-1.2,1.1);
 
+Texture2D diffMap;
 Texture2D normalMap;
 Texture2D noiseMap;
 TextureCube cubeTexture;
@@ -54,9 +59,9 @@ SamplerState LinearSampler
 SamplerState CubeMapSampler
 {
 	Filter = ANISOTROPIC;
-	AddressU = Clamp;
-	AddressV = Clamp;
-	AddressW = Clamp;    
+	AddressU = Wrap;
+	AddressV = Wrap;
+	AddressW = Wrap;    
 };
 
 
@@ -277,78 +282,64 @@ vertex2pixel vertexNormalMap(app2vertex In)
 /***** PIXEL SHADER *******************/
 /**************************************/
 
-float3x3 compute_tangent_frame(float3 Normal, float3 View, float2 UV)
-{
-	float3 dp1 = ddx(View);
-	float3 dp2 = ddy(View);
-	float2 duv1 = ddx(UV);
-	float2 duv2 = ddy(UV);
-	
-	float3x3 M = float3x3(dp1, dp2, cross(dp1, dp2));
-	float2x3 inverseM = float2x3(cross(M[1], M[2]), cross(M[2], M[0]));
-	float3 Tangent = mul(float2(duv1.x, duv2.x), inverseM);
-	float3 Binormal = mul(float2(duv1.y, duv2.y), inverseM);
-	
-	return float3x3(normalize(Tangent), normalize(Binormal), Normal);
-}
-
 // SV_TARGET is dx11 style pixel shader
-float4 pixel(vertex2pixel input, uniform int debugOutput) : SV_TARGET 
+float4 pixel(vertex2pixel input) : SV_TARGET 
 {	
 	//Texture sampling
-	float3 worldSpacePix = input.position;
-	float4 color = waterColorA;
-	float3x3 toWorld = float3x3(input.worldTangent, input.worldBinormal, input.worldNormal);
-	float3 normal = SampleTexture(normalMap, LinearSampler,  input.texCoord0*tile, float3(0.5, 0.5, 1.0))*2-1;
-	float3 bumpWorld = normalize(mul(normal,toWorld));
-	float3 noise = SampleTexture(noiseMap, LinearSampler, input.texCoord0*tile/2, float3(1.0, 1.0, 1.0));
+	float3 worldSpacePix = input.positionW;
+	float3x3 toWorld 	= float3x3(input.worldTangent, input.worldBinormal, input.worldNormal);
+	float3 normal 		= SampleTexture(normalMap, LinearSampler,  input.texCoord0*tile, float3(0.5, 0.5, 1.0))*2-1;
+	float3 bumpWorld 	= normalize(mul(normal,toWorld));
+	float3 diffuseMap 	= SampleTexture(diffMap, LinearSampler, input.texCoord0*tile, float3(1.0, 1.0, 1.0));
+	float3 noiseM 		= SampleTexture(noiseMap, LinearSampler, input.texCoord0*tile/2, waterColorA.xyz);
 	
 	// Light calculation
 	LightData light0 = CalculateLight(light0Type, light0AttenScale, light0Pos, worldSpacePix,  ToLinear(light0Color), light0Intensity, light0Dir, light0ConeAngle, light0FallOff);
 	light0Dir = light0.dir;
 	light0Color = light0.color;
+	float3 light0Vec = light0.lightVec;
 	
 	float3 V = input.viewVec;
 	float3 H = normalize(V + light0Dir);
 	float3 R = reflect(-V, input.worldNormal);
-	float4 specular = specIntensity * float4(light0Color,0) * pow(dot(bumpWorld, H),256);
+	float3 refraction = refract(-V, input.worldNormal, 1.3333);
 
-    float4 skyrefl = cubeTexture.Sample(CubeMapSampler, R);
+    float4 reflectedColor = cubeTexture.Sample(CubeMapSampler, R);
+    float4 refractedColor = cubeTexture.Sample(CubeMapSampler, refraction);
+    float3 reflectionCoefficient = max(min(fresBias + fresScale * (1 + refraction)*fresPower,0), 1);
 
-	// Compute Fresnel term
-	float NdotL = max(dot(V, R), 0);
-	float facing = (1.0 - NdotL);
-
-	// Lerp between water color and deep water color
-	float3 WaterColor = float3(0, 0.15, 0.115);
-	float3 waterColor = (WaterColor * facing + waterColorA * (1.0 - facing));
-
-	float Rzero = 1.0;
-    float4 fresnel = Rzero + (1.0f - Rzero) * pow(abs(1.0f - dot(input.worldNormal, V)), 5.0 );    
-    //float4 result =  color +  lerp(float4(waterColor,1), skyrefl, fresnel) ;
-    //float4 result =  color +  lerp(color, skyrefl, fresnel) ;
-    //result.a = 1;
-
-    /*
-    // Trying out new spec calc
-    float3 eyeVecNorm = normalize(V);
-    float3x3 tangentFrame = compute_tangent_frame(input.worldNormal, eyeVecNorm, input.texCoord0);
-    float3 N = SampleTexture(normalMap, LinearSampler,  input.texCoord0*tile, float3(0.5, 0.5, 1.0))*2-1;
-    float3 newNormal = normalize(mul(2.0f * N - 1.0f, tangentFrame));
-	float3 mirrorEye = (2.0 * dot(eyeVecNorm, newNormal) * newNormal - eyeVecNorm);
-	float dotSpec = saturate(dot(mirrorEye.xyz, -light0Dir) * 0.5 + 0.5);
-	//float4 specular = (1.0 - fresnel) * saturate(-light0Dir.y) * ((pow(dotSpec, 512.0)) * (specIntensity * 1.8 + 0.2));
-	//specular += specular * 25 * saturate(specIntensity - 0.05);
-	*/
+    //float fresnel = pow(1.0-abs(R),5.0);
+	//float Rzero = 1.0;
+    //float4 fresnel = Rzero + (1.0f - Rzero) * pow(abs(1.0f - dot(input.worldNormal, V)), 5.0 );    
 
 	// Base color of surface with lighting
+	float4 color = waterColorA;
+	color.xyz = lerp(diffuseMap, waterColorA.xyz, 0.25);
 	color.rgb = color.rgb * light0Intensity * light0Color;
 	float diffLight = saturate(dot(bumpWorld, light0Dir));
 
-	//float4 waterColorB = lerp(skyrefl, cubeTex, 0.6f);
+    // Calculate the reflection vector using the normal and the direction of the light.
+    float3 reflection = -reflect(bumpWorld*0.25, normalize(light0Dir));	
+    // Calculate the specular light based on the reflection and the camera position.
+    float4 specular = dot(normalize(reflection), normalize(V));
+    //float4 specular = pow(dot(H, bumpWorld), specIntensity);
+    specular = pow(specular, 256);
+    specular *= specIntensity * float4(light0Color,0);
+
+
+   /* float3 vRef = normalize(reflect(-light0Vec, bumpWorld));
+    float stemp =max(0.0, dot(diffuseMap, vRef) );
+    float4 specular = pow(stemp, 64.0); 
+
+	//float4 specular = specIntensity * float4(light0Color,0) * pow(dot(bumpWorld, H),256);
+	*/
 
 	color *= diffLight;
-	float4 result = lerp(color, skyrefl, 0.25);
+	float3 cFinal = reflectionCoefficient * reflectedColor + (1 - reflectionCoefficient) * refractedColor;
+	cFinal += color.xyz;
+	float4 final = float4(cFinal, 0);
+	float4 result = lerp(color, final, reflectPower);
+
 	return saturate(color * result + specular);
 } 
 
@@ -367,7 +358,7 @@ technique11 Shaded {
 	pass p0 {
 		SetRasterizerState(CullFront);
 		SetVertexShader( CompileShader( vs_5_0, vertexNormalMap() ));
-		SetPixelShader(CompileShader(ps_5_0, pixel(0)));
+		SetPixelShader(CompileShader(ps_5_0, pixel()));
 	}
 }
 
@@ -431,4 +422,34 @@ float sea_octave(float2 uv, float choppy)
     wv = lerp(wv,swv,wv);
     return pow(1.0-pow(wv.x * wv.y,0.65),choppy);
 }
+
+	// Lerp between water color and deep water color
+	//float3 WaterColor = float3(0, 0.15, 0.115);
+	//float3 waterColor = (WaterColor * facing + waterColorA * (1.0 - facing));
 */
+
+    /*
+float3x3 compute_tangent_frame(float3 Normal, float3 View, float2 UV)
+{
+	float3 dp1 = ddx(View);
+	float3 dp2 = ddy(View);
+	float2 duv1 = ddx(UV);
+	float2 duv2 = ddy(UV);
+	
+	float3x3 M = float3x3(dp1, dp2, cross(dp1, dp2));
+	float2x3 inverseM = float2x3(cross(M[1], M[2]), cross(M[2], M[0]));
+	float3 Tangent = mul(float2(duv1.x, duv2.x), inverseM);
+	float3 Binormal = mul(float2(duv1.y, duv2.y), inverseM);
+	
+	return float3x3(normalize(Tangent), normalize(Binormal), Normal);
+}
+    // Trying out new spec calc
+    float3 eyeVecNorm = normalize(V);
+    float3x3 tangentFrame = compute_tangent_frame(input.worldNormal, eyeVecNorm, input.texCoord0);
+    float3 N = SampleTexture(normalMap, LinearSampler,  input.texCoord0*tile, float3(0.5, 0.5, 1.0))*2-1;
+    float3 newNormal = normalize(mul(2.0f * N - 1.0f, tangentFrame));
+	float3 mirrorEye = (2.0 * dot(eyeVecNorm, newNormal) * newNormal - eyeVecNorm);
+	float dotSpec = saturate(dot(mirrorEye.xyz, -light0Dir) * 0.5 + 0.5);
+	//float4 specular = (1.0 - fresnel) * saturate(-light0Dir.y) * ((pow(dotSpec, 512.0)) * (specIntensity * 1.8 + 0.2));
+	//specular += specular * 25 * saturate(specIntensity - 0.05);
+	*/
