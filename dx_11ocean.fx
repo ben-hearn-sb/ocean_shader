@@ -226,8 +226,8 @@ float3 gerstnerWave(float3 position, float multiplier, float2 direction)
 
 
 // Static for the time being... Need to make them a bit more dynamic
-static float mulArray[3] = {0.561,1.793,0.697};
-static float2 dirsArray[3] = {float2(1.0, 0.0), float2(1.0, 0.5), float2(0.0, 1.0)};
+static float mulArray[6] = {0.561,1.793,2.697,1.61,2.14,0.211};
+static float2 dirsArray[6] = {float2(1.0, 0.0), float2(1.0, 0.5), float2(0.0, 1.0),float2(1.0, 0.7), float2(1.4, 0.5), float2(0.1, 0.76)};
 
 vertex2pixel vertexNormalMap(app2vertex In)
 { 
@@ -246,7 +246,7 @@ vertex2pixel vertexNormalMap(app2vertex In)
 	float3 sumB = float3(0,0,0);
 	float3 sumT = float3(0,0,0);
 	float3 sumN = float3(0,0,0);
-	for(int i=0; i < 3; i++)
+	for(int i=0; i < 6; i++)
 	{
 		float2 dirsXY = float2(dirX, dirY);
 		float2 dirsVal = dirsArray[i]*dirsXY;
