@@ -296,31 +296,24 @@ float3x3 compute_tangent_frame(float3 Normal, float3 View, float2 UV)
 float4 pixel(vertex2pixel input, uniform int debugOutput) : SV_TARGET 
 {	
 	//Texture sampling
-	float3 worldSpacePix = input.positionW;
+	float3 worldSpacePix = input.position;
 	float4 color = waterColorA;
 	float3x3 toWorld = float3x3(input.worldTangent, input.worldBinormal, input.worldNormal);
 	float3 normal = SampleTexture(normalMap, LinearSampler,  input.texCoord0*tile, float3(0.5, 0.5, 1.0))*2-1;
 	float3 bumpWorld = normalize(mul(normal,toWorld));
 	float3 noise = SampleTexture(noiseMap, LinearSampler, input.texCoord0*tile/2, float3(1.0, 1.0, 1.0));
-	//float3 cubeTex = cubeTexture.Sample(CubeMapSampler, input.texCoord0);
-	float4 cube_lookup = float4(1 - saturate(dot(bumpWorld, input.viewVec)), reflect(input.viewVec, bumpWorld));
-	float4 cubeTex = cubeTexture.Sample(CubeMapSampler, cube_lookup);
 	
 	// Light calculation
 	LightData light0 = CalculateLight(light0Type, light0AttenScale, light0Pos, worldSpacePix,  ToLinear(light0Color), light0Intensity, light0Dir, light0ConeAngle, light0FallOff);
 	light0Dir = light0.dir;
 	light0Color = light0.color;
 	
-	// Blinn Phong spec term
-	float3 H = normalize(input.viewVec + light0Dir);
 	float3 V = input.viewVec;
+	float3 H = normalize(V + light0Dir);
 	float3 R = reflect(-V, input.worldNormal);
 	float4 specular = specIntensity * float4(light0Color,0) * pow(dot(bumpWorld, H),256);
 
-	//R.y = max(R.y,0); //New, also normalize above
-	float4 skyrefl;
-	//skyrefl = cubeTexture.SampleLevel(CubeMapSampler, R, 8);
-    skyrefl = cubeTexture.Sample(CubeMapSampler, R + bumpWorld*8.0); // + bumpWorld*5.0 blurs the cubemap into the normalmap
+    float4 skyrefl = cubeTexture.Sample(CubeMapSampler, R);
 
 	// Compute Fresnel term
 	float NdotL = max(dot(V, R), 0);
@@ -348,18 +341,14 @@ float4 pixel(vertex2pixel input, uniform int debugOutput) : SV_TARGET
 	//specular += specular * 25 * saturate(specIntensity - 0.05);
 	*/
 
+	// Base color of surface with lighting
 	color.rgb = color.rgb * light0Intensity * light0Color;
 	float diffLight = saturate(dot(bumpWorld, light0Dir));
 
 	//float4 waterColorB = lerp(skyrefl, cubeTex, 0.6f);
 
 	color *= diffLight;
-	float4 result =  color +  lerp(color, skyrefl, fresnel);
-	//color.rgb *= noise;
-	//color = lerp(waterColor, color, fresnel.r);
-	//color.rgb += waterColor;
-	//return color;
-	//return fresnel + color;
+	float4 result = lerp(color, skyrefl, 0.25);
 	return saturate(color * result + specular);
 } 
 
