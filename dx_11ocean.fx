@@ -217,7 +217,7 @@ vertex2pixel vertexNormalMap(app2vertex In)
     float3 worldSpacePos = mul(In.position, World);
     Out.positionW = worldSpacePos;
     Out.texCoord0 = In.texCoord0;
-    //Out.texCoord0.xy += (globalTimer*timerScale1);
+    Out.texCoord0.xy -= (globalTimer*timerScale1);
     //Out.cubeCoord = In.texCoord1;
 	Out.viewVec = ViewInverse[3] - worldSpacePos;
 
@@ -288,7 +288,7 @@ float4 pixel(vertex2pixel input) : SV_TARGET
 	float3 diffuseMap 	= SampleTexture(diffMap, LinearSampler, input.texCoord0*tile, float3(1.0, 1.0, 1.0));
 
 	float3 foam 		= SampleTexture(foamMap, LinearSampler, input.texCoord0, float3(1.0, 1.0, 1.0));
-	float3 noiseM 		= SampleTexture(noiseMap, LinearSampler, input.texCoord0*tile/2, waterColorA.xyz);
+	float3 noiseM 		= SampleTexture(noiseMap, LinearSampler, input.texCoord0, waterColorA.xyz);
 	
 	// Light calculation
 	LightData light0 = CalculateLight(light0Type, light0AttenScale, light0Pos, worldSpacePix,  ToLinear(light0Color), light0Intensity, light0Dir, light0ConeAngle, light0FallOff);
@@ -303,7 +303,7 @@ float4 pixel(vertex2pixel input) : SV_TARGET
 
     float4 reflectedColor = cubeTexture.Sample(CubeMapSampler, R);
     float4 refractedColor = cubeTexture.Sample(CubeMapSampler, refraction);
-    float3 reflectionCoefficient = max(min(fresBias + fresScale * (1 + refraction)*fresPower,0), 1);
+    float3 reflectionCoefficient = max(min(fresBias + fresScale * (1 + refraction)*fresPower,5), 0);
 
     //float fresnel = pow(1.0-abs(R),5.0);
 	//float Rzero = 1.0;
@@ -334,11 +334,16 @@ float4 pixel(vertex2pixel input) : SV_TARGET
 	color *= diffLight;
 	float3 cFinal = reflectionCoefficient * reflectedColor + (1 - reflectionCoefficient) * refractedColor;
 	cFinal += color.xyz;
+	cFinal *= noiseM.xyz;
 	float4 final = float4(cFinal, 0);
 	float4 result = lerp(color, final, reflectPower);
-	//float3 withFoam = lerp(result.xyz, foam, diffuseMap.r);
 
-	return saturate(color * result + specular);
+	// Foam from height map at the moment. Need to make it based on actual wave crest
+	float fm = clamp(pow(noiseM, 7),0,1);
+	float3 red = float3(255, 255, 255);
+	float3 withFoam = lerp(result.xyz, red, fm);
+	float4 finalFoam = float4(withFoam, 1);
+	return saturate(color * finalFoam + specular);
 } 
 
 
