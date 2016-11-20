@@ -45,6 +45,7 @@ static const float2x2 octave_m = float2x2(1.6,1.2,-1.2,1.1);
 
 Texture2D diffMap;
 Texture2D normalMap;
+Texture2D foamMap;
 Texture2D noiseMap;
 TextureCube cubeTexture;
 
@@ -92,32 +93,12 @@ struct vertex2pixel
 	float3 worldTangent		: TEXCOORD3;
 	float3 worldBinormal	: TEXCOORD4;
 	float3 positionW		: TEXCOORD5;
-	float3 screenPos 		: TEXCOORD6;
-	float2 cubeCoord		: TEXCOORD7;
+	float3 heightW	 		: TEXCOORD6;
 };
 
 /**************************************/
 /***** VERTEX SHADER ******************/
 /**************************************/
-
-// original noise and trace functions from https://www.shadertoy.com/view/Ms2SD1
-
-float hash( float2 p ) 
-{
-	float h = dot(p,float2(127.1,311.7));	
-    return frac(sin(h)*43758.5453123);
-}
-
-float customNoise( float2 p ) 
-{
-    float2 i = floor( p );
-    float2 f = frac( p );	
-	float2 u = f*f*(3.0-2.0*f);
-    return -1.0+2.0*lerp( lerp( hash( i + float2(0.0,0.0) ),
-    							hash( i + float2(1.0,0.0) ), u.x),
-        						lerp( hash( i + float2(0.0,1.0) ), 
-        						hash( i + float2(1.0,1.0) ), u.x), u.y);
-}
 
 float3 gerstnerNormal(float3 position, float multiplier, float2 direction)
 {
@@ -223,11 +204,9 @@ float3 gerstnerWave(float3 position, float multiplier, float2 direction)
 	return P;
 }
 
-
-
 // Static for the time being... Need to make them a bit more dynamic
-static float mulArray[6] = {0.561,1.793,2.697,1.61,2.14,0.211};
-static float2 dirsArray[6] = {float2(1.0, 0.0), float2(1.0, 0.5), float2(0.0, 1.0),float2(1.0, 0.7), float2(1.4, 0.5), float2(0.1, 0.76)};
+static float mulArray[3] = {0.561,1.793,0.697};
+static float2 dirsArray[3] = {float2(0.0, 1.0), float2(1.0, 0.5), float2(0.25, 1.0)};
 
 vertex2pixel vertexNormalMap(app2vertex In)
 { 
@@ -246,12 +225,14 @@ vertex2pixel vertexNormalMap(app2vertex In)
 	float3 sumB = float3(0,0,0);
 	float3 sumT = float3(0,0,0);
 	float3 sumN = float3(0,0,0);
-	for(int i=0; i < 6; i++)
+	for(int i=0; i < 3; i++)
 	{
 		float2 dirsXY = float2(dirX, dirY);
 		float2 dirsVal = dirsArray[i]*dirsXY;
-		float mulVal = mulArray[i]* customNoise(dirsVal);
+		float mulVal = mulArray[i];//* customNoise(dirsVal);
 		//sumW += gerstnerWave(In.position, mulVal, dirsArray[i]);
+		// worldSpacePos gives a much smaller scale to work from. Looks better from long distances.
+		// Perhaps a scale value can help achive this same result with in.position....
 		sumW += gerstnerWave(In.position, mulArray[i], dirsArray[i]);
 		sumB += gerstnerBinormal(sumW, mulArray[i], dirsArray[i]);
 		sumT += gerstnerTangent(sumW, mulArray[i], dirsArray[i]);
@@ -271,6 +252,9 @@ vertex2pixel vertexNormalMap(app2vertex In)
 	sumN.y = 1-sumN.y;
 	sumN.z = -sumN.z;
 
+	Out.heightW = mul(float4(sumW, 1), World);
+
+	//Out.positionW = mul(float4(sumW,In.position.w), World);
 	Out.worldBinormal = mul(In.binormal + normalize(sumB), WorldInverseTranspose).xyz;
 	Out.worldTangent = mul(In.tangent 	+ normalize(sumT), WorldInverseTranspose).xyz;	
 	Out.worldNormal = mul(In.normal 	+ normalize(sumN), WorldInverseTranspose).xyz;
@@ -287,10 +271,23 @@ float4 pixel(vertex2pixel input) : SV_TARGET
 {	
 	//Texture sampling
 	float3 worldSpacePix = input.positionW;
+	float2 heightWorld = input.heightW;
+
 	float3x3 toWorld 	= float3x3(input.worldTangent, input.worldBinormal, input.worldNormal);
 	float3 normal 		= SampleTexture(normalMap, LinearSampler,  input.texCoord0*tile, float3(0.5, 0.5, 1.0))*2-1;
 	float3 bumpWorld 	= normalize(mul(normal,toWorld));
+
+	if(heightWorld.y > 2.0)
+	{
+		float3 diffuseMap 	= SampleTexture(diffMap, LinearSampler, input.texCoord0*tile, float3(1.0, 1.0, 1.0));
+	}
+	else
+	{
+		float3 diffuseMap 	= SampleTexture(foamMap, LinearSampler, input.texCoord0*tile, float3(1.0, 1.0, 1.0));
+	}
 	float3 diffuseMap 	= SampleTexture(diffMap, LinearSampler, input.texCoord0*tile, float3(1.0, 1.0, 1.0));
+
+	float3 foam 		= SampleTexture(foamMap, LinearSampler, input.texCoord0, float3(1.0, 1.0, 1.0));
 	float3 noiseM 		= SampleTexture(noiseMap, LinearSampler, input.texCoord0*tile/2, waterColorA.xyz);
 	
 	// Light calculation
@@ -339,6 +336,7 @@ float4 pixel(vertex2pixel input) : SV_TARGET
 	cFinal += color.xyz;
 	float4 final = float4(cFinal, 0);
 	float4 result = lerp(color, final, reflectPower);
+	//float3 withFoam = lerp(result.xyz, foam, diffuseMap.r);
 
 	return saturate(color * result + specular);
 } 
@@ -452,4 +450,21 @@ float3x3 compute_tangent_frame(float3 Normal, float3 View, float2 UV)
 	float dotSpec = saturate(dot(mirrorEye.xyz, -light0Dir) * 0.5 + 0.5);
 	//float4 specular = (1.0 - fresnel) * saturate(-light0Dir.y) * ((pow(dotSpec, 512.0)) * (specIntensity * 1.8 + 0.2));
 	//specular += specular * 25 * saturate(specIntensity - 0.05);
+
+float hash( float2 p ) 
+{
+	float h = dot(p,float2(127.1,311.7));	
+    return frac(sin(h)*43758.5453123);
+}
+
+float customNoise( float2 p ) 
+{
+    float2 i = floor( p );
+    float2 f = frac( p );	
+	float2 u = f*f*(3.0-2.0*f);
+    return -1.0+2.0*lerp( lerp( hash( i + float2(0.0,0.0) ),
+    							hash( i + float2(1.0,0.0) ), u.x),
+        						lerp( hash( i + float2(0.0,1.0) ), 
+        						hash( i + float2(1.0,1.0) ), u.x), u.y);
+}
 	*/
