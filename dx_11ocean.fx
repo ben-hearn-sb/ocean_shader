@@ -39,7 +39,6 @@ float crestFactor;
 float fresBias;
 float fresScale;
 float fresPower;
-float reflectPower;
 
 static const float2x2 octave_m = float2x2(1.6,1.2,-1.2,1.1);
 
@@ -304,14 +303,9 @@ float4 pixel(vertex2pixel input) : SV_TARGET
 
     float4 reflectedColor = cubeTexture.Sample(CubeMapSampler, R);
     float4 refractedColor = cubeTexture.Sample(CubeMapSampler, refraction);
-    //float3 reflectionCoefficient = max(min(fresBias + fresScale * (1 + refraction)*fresPower,5), 0);
-    //half facing = 1.0 - dot(input.worldNormal, light0Dir);
     float reflectionCoefficient = fresBias + fresScale * pow(1.0 - dot(normalize(V), normalize(input.worldNormal)), fresPower);
-    //return reflectionCoefficient;
     float4 red1 = float4(255, 0, 0, 1);
     float4 white1 = float4(255, 255, 255,1);
-    //return lerp(red1, reflectedColor, reflectionCoefficient);
-    //return lerp(red1, white1, reflectionCoefficient);
 
 	// Base color of surface with lighting
 	float4 color = waterColorA;
@@ -330,8 +324,6 @@ float4 pixel(vertex2pixel input) : SV_TARGET
 	//cFinal += color.xyz;
 	//cFinal *= noiseM.xyz;
 	float4 final = float4(cFinal, 1);
-	//return final;
-	//float4 resultColor = lerp(color, final, reflectPower);
 	float4 resultColor = lerp(color, reflectedColor, reflectionCoefficient);
 	//float4 result = lerp(color, final, reflectionCoefficient);
 	//float4 result = color + final;
