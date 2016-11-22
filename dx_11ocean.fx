@@ -207,6 +207,40 @@ float3 gerstnerWave(float3 position, float multiplier, float2 direction)
 static float mulArray[3] = {0.561,1.793,0.697};
 static float2 dirsArray[3] = {float2(0.0, 1.0), float2(1.0, 0.5), float2(0.25, 1.0)};
 
+/*
+//------------------------------------
+// Internal depth textures for Maya depth-peeling transparency
+//------------------------------------
+#ifdef _MAYA_
+
+	Texture2D transpDepthTexture : transpdepthtexture
+	<
+		string UIWidget = "None";
+	>;
+
+	Texture2D opaqueDepthTexture : opaquedepthtexture
+	<
+		string UIWidget = "None";
+	>;
+
+#endif
+
+void Peel(SHADERDATA IN)
+{
+	float currZ = abs( mul( float4(IN.worldPosition, 1.0f), view ).z );
+
+	float4 Pndc  = mul( float4(IN.worldPosition, 1.0f), viewPrj );
+	float2 UV = Pndc.xy / Pndc.w * float2(0.5f, -0.5f) + 0.5f;
+	float prevZ = transpDepthTexture.Sample(SamplerShadowDepth, UV).r;
+	float opaqZ = opaqueDepthTexture.Sample(SamplerShadowDepth, UV).r;
+	float bias = 0.00002f;
+	if (currZ < prevZ * (1.0f + bias) || currZ > opaqZ * (1.0f - bias))
+	{
+		discard;
+	}
+}
+*/
+
 vertex2pixel vertexNormalMap(app2vertex In)
 { 
 	vertex2pixel Out = (vertex2pixel)0;
@@ -258,7 +292,7 @@ vertex2pixel vertexNormalMap(app2vertex In)
 	Out.worldTangent = mul(In.tangent 	+ normalize(sumT), WorldInverseTranspose).xyz;	
 	Out.worldNormal = mul(In.normal 	+ normalize(sumN), WorldInverseTranspose).xyz;
 	Out.position = mul(float4(sumW,1), WorldViewProjection);
-	Out.depth = 1.0f - (Out.position.y / Out.position.w);
+	Out.depth = 1.0f - (Out.position.z/ Out.position.w);
     return Out; 
 }
 
