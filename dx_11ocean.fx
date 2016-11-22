@@ -78,7 +78,6 @@ struct app2vertex
 	float3 tangent			: TANGENT;
 	float3 binormal			: BINORMAL;
 	float3 normal			: NORMAL;
-	//float3 Fresnel : COLOR0;
 }; 
 
 
@@ -93,6 +92,7 @@ struct vertex2pixel
 	float3 worldBinormal	: TEXCOORD4;
 	float3 positionW		: TEXCOORD5;
 	float3 heightW	 		: TEXCOORD6;
+	float depth 			: TEXCOORD7;
 };
 
 /**************************************/
@@ -258,6 +258,7 @@ vertex2pixel vertexNormalMap(app2vertex In)
 	Out.worldTangent = mul(In.tangent 	+ normalize(sumT), WorldInverseTranspose).xyz;	
 	Out.worldNormal = mul(In.normal 	+ normalize(sumN), WorldInverseTranspose).xyz;
 	Out.position = mul(float4(sumW,1), WorldViewProjection);
+	Out.depth = 1.0f - (Out.position.y / Out.position.w);
     return Out; 
 }
 
@@ -268,8 +269,10 @@ vertex2pixel vertexNormalMap(app2vertex In)
 // SV_TARGET is dx11 style pixel shader
 float4 pixel(vertex2pixel input) : SV_TARGET 
 {	
-	//Texture sampling
+	float depth = input.depth;
 	float3 worldSpacePix = input.positionW;
+	return float4(depth, depth, depth, 1.0f);
+	//Texture sampling
 	float2 heightWorld = input.heightW;
 
 	float3x3 toWorld 	= float3x3(input.worldTangent, input.worldBinormal, input.worldNormal);
@@ -345,6 +348,13 @@ float4 pixel(vertex2pixel input) : SV_TARGET
 RasterizerState CullFront
 {
 	CullMode = Front;
+};
+
+BlendState AlphaBlendingOn
+{
+    BlendEnable[0] = TRUE;
+    DestBlend = INV_SRC_ALPHA;
+    SrcBlend = SRC_ALPHA;
 };
 
 technique11 Shaded {
