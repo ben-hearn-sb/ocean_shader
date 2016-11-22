@@ -298,16 +298,20 @@ float4 pixel(vertex2pixel input) : SV_TARGET
 	
 	float3 V = input.viewVec;
 	float3 H = normalize(V + light0Dir);
-	float3 R = reflect(-V, input.worldNormal);
-	float3 refraction = refract(-V, input.worldNormal, 1.3333);
+	float3 R = reflect(V, input.worldNormal);
+	float3 refraction = refract(V, input.worldNormal, 1.3333);
+	float3 I = -V;
 
     float4 reflectedColor = cubeTexture.Sample(CubeMapSampler, R);
     float4 refractedColor = cubeTexture.Sample(CubeMapSampler, refraction);
-    float3 reflectionCoefficient = max(min(fresBias + fresScale * (1 + refraction)*fresPower,5), 0);
-
-    //float fresnel = pow(1.0-abs(R),5.0);
-	//float Rzero = 1.0;
-    //float4 fresnel = Rzero + (1.0f - Rzero) * pow(abs(1.0f - dot(input.worldNormal, V)), 5.0 );    
+    //float3 reflectionCoefficient = max(min(fresBias + fresScale * (1 + refraction)*fresPower,5), 0);
+    //half facing = 1.0 - dot(input.worldNormal, light0Dir);
+    float reflectionCoefficient = fresBias + fresScale * pow(1.0 - dot(normalize(V), normalize(input.worldNormal)), fresPower);
+    //return reflectionCoefficient;
+    float4 red1 = float4(255, 0, 0, 1);
+    float4 white1 = float4(255, 255, 255,1);
+    //return lerp(red1, reflectedColor, reflectionCoefficient);
+    //return lerp(red1, white1, reflectionCoefficient);
 
 	// Base color of surface with lighting
 	float4 color = waterColorA;
@@ -315,33 +319,27 @@ float4 pixel(vertex2pixel input) : SV_TARGET
 	color.rgb = color.rgb * light0Intensity * light0Color;
 	float diffLight = saturate(dot(bumpWorld, light0Dir));
 
-    // Calculate the reflection vector using the normal and the direction of the light.
     float3 reflection = -reflect(bumpWorld*0.25, normalize(light0Dir));	
-    // Calculate the specular light based on the reflection and the camera position.
     float4 specular = dot(normalize(reflection), normalize(V));
-    //float4 specular = pow(dot(H, bumpWorld), specIntensity);
     specular = pow(specular, 256);
     specular *= specIntensity * float4(light0Color,0);
 
-
-   /* float3 vRef = normalize(reflect(-light0Vec, bumpWorld));
-    float stemp =max(0.0, dot(diffuseMap, vRef) );
-    float4 specular = pow(stemp, 64.0); 
-
-	//float4 specular = specIntensity * float4(light0Color,0) * pow(dot(bumpWorld, H),256);
-	*/
-
 	color *= diffLight;
-	float3 cFinal = reflectionCoefficient * reflectedColor + (1 - reflectionCoefficient) * refractedColor;
-	cFinal += color.xyz;
-	cFinal *= noiseM.xyz;
-	float4 final = float4(cFinal, 0);
-	float4 result = lerp(color, final, reflectPower);
+	//float3 cFinal = reflectionCoefficient * reflectedColor + (1.0 - reflectionCoefficient) * refractedColor;
+	float3 cFinal = lerp(reflectedColor ,refractedColor, reflectionCoefficient);
+	//cFinal += color.xyz;
+	//cFinal *= noiseM.xyz;
+	float4 final = float4(cFinal, 1);
+	//return final;
+	//float4 resultColor = lerp(color, final, reflectPower);
+	float4 resultColor = lerp(color, reflectedColor, reflectionCoefficient);
+	//float4 result = lerp(color, final, reflectionCoefficient);
+	//float4 result = color + final;
 
 	// Foam from height map at the moment. Need to make it based on actual wave crest
 	float fm = clamp(pow(noiseM, 7),0,1);
 	float3 red = float3(255, 255, 255);
-	float3 withFoam = lerp(result.xyz, red, fm);
+	float3 withFoam = lerp(resultColor.xyz, red, fm);
 	float4 finalFoam = float4(withFoam, 1);
 	return saturate(color * finalFoam + specular);
 } 
@@ -473,3 +471,14 @@ float customNoise( float2 p )
         						hash( i + float2(1.0,1.0) ), u.x), u.y);
 }
 	*/
+
+   /* float3 vRef = normalize(reflect(-light0Vec, bumpWorld));
+    float stemp =max(0.0, dot(diffuseMap, vRef) );
+    float4 specular = pow(stemp, 64.0); 
+
+	//float4 specular = specIntensity * float4(light0Color,0) * pow(dot(bumpWorld, H),256);
+	*/
+
+    //float fresnel = pow(1.0-abs(R),5.0);
+	//float Rzero = 1.0;
+    //float4 fresnel = Rzero + (1.0f - Rzero) * pow(abs(1.0f - dot(input.worldNormal, V)), 5.0 );    
