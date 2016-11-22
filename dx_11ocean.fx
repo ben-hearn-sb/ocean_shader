@@ -13,6 +13,8 @@ cbuffer UpdatePerFrame : register(b0)
 {
 	float4x4 ViewInverse 	: ViewInverse 	< string UIWidget = "None"; >;
 	float globalTimer 		: TIME 			< string UIWidget = "None"; >;
+	float4x4 view 			: View 	< string UIWidget = "None"; >;
+	float4x4 viewPrj		: ViewProjection		< string UIWidget = "None"; >;
 }
 
 //Object constants
@@ -207,7 +209,7 @@ float3 gerstnerWave(float3 position, float multiplier, float2 direction)
 static float mulArray[3] = {0.561,1.793,0.697};
 static float2 dirsArray[3] = {float2(0.0, 1.0), float2(1.0, 0.5), float2(0.25, 1.0)};
 
-/*
+
 //------------------------------------
 // Internal depth textures for Maya depth-peeling transparency
 //------------------------------------
@@ -225,21 +227,29 @@ static float2 dirsArray[3] = {float2(0.0, 1.0), float2(1.0, 0.5), float2(0.25, 1
 
 #endif
 
-void Peel(SHADERDATA IN)
+SamplerState SamplerShadowDepth
 {
-	float currZ = abs( mul( float4(IN.worldPosition, 1.0f), view ).z );
+	Filter = MIN_MAG_MIP_POINT;
+	AddressU = Border;
+	AddressV = Border;
+	BorderColor = float4(1.0f, 1.0f, 1.0f, 1.0f);
+};
 
-	float4 Pndc  = mul( float4(IN.worldPosition, 1.0f), viewPrj );
+void Peel(float3 worldPos, float depth)
+{
+	float currZ = abs( mul( float4(worldPos, 1.0f), view ).z );
+	float4 Pndc  = mul( float4(worldPos, 1.0f), viewPrj );
 	float2 UV = Pndc.xy / Pndc.w * float2(0.5f, -0.5f) + 0.5f;
 	float prevZ = transpDepthTexture.Sample(SamplerShadowDepth, UV).r;
 	float opaqZ = opaqueDepthTexture.Sample(SamplerShadowDepth, UV).r;
 	float bias = 0.00002f;
-	if (currZ < prevZ * (1.0f + bias) || currZ > opaqZ * (1.0f - bias))
+	//if (currZ < prevZ * (1.0f + bias) || currZ > opaqZ * (1.0f - bias))
+	if (depth < prevZ * (1.0f + bias) || depth > opaqZ * (1.0f - bias))
 	{
 		discard;
+		//return opaqZ;
 	}
 }
-*/
 
 vertex2pixel vertexNormalMap(app2vertex In)
 { 
@@ -291,8 +301,8 @@ vertex2pixel vertexNormalMap(app2vertex In)
 	Out.worldBinormal = mul(In.binormal + normalize(sumB), WorldInverseTranspose).xyz;
 	Out.worldTangent = mul(In.tangent 	+ normalize(sumT), WorldInverseTranspose).xyz;	
 	Out.worldNormal = mul(In.normal 	+ normalize(sumN), WorldInverseTranspose).xyz;
-	Out.position = mul(float4(sumW,1), WorldViewProjection);
-	Out.depth = 1.0f - (Out.position.z/ Out.position.w);
+	Out.position = mul(float4(sumW,In.position.w), WorldViewProjection);
+	Out.depth = 1.0f-(In.position.z/ In.position.w);
     return Out; 
 }
 
@@ -304,23 +314,24 @@ vertex2pixel vertexNormalMap(app2vertex In)
 float4 pixel(vertex2pixel input) : SV_TARGET 
 {	
 	float depth = input.depth;
+	float td = transpDepthTexture.Sample(SamplerShadowDepth, input.position.xy).r;
+	float opaqZ = opaqueDepthTexture.Sample(SamplerShadowDepth, input.position.xy).r;
+	float bias = 0.00002f;
+	td *= (1.0f + bias);
+	opaqZ *= (1.0f - bias);
+	//if (depth < td * (1.0f + bias) || depth > opaqZ * (1.0f - bias))
+	//if (depth < td * (1.0f + bias))
+	//{
+	//	discard;
+	//}
+	//return float4(td, td, td, 1.0f);
 	float3 worldSpacePix = input.positionW;
-	return float4(depth, depth, depth, 1.0f);
+	//Peel(worldSpacePix, depth);
 	//Texture sampling
-	float2 heightWorld = input.heightW;
 
 	float3x3 toWorld 	= float3x3(input.worldTangent, input.worldBinormal, input.worldNormal);
 	float3 normal 		= SampleTexture(normalMap, LinearSampler,  input.texCoord0*tile, float3(0.5, 0.5, 1.0))*2-1;
 	float3 bumpWorld 	= normalize(mul(normal,toWorld));
-
-	if(heightWorld.y > 2.0)
-	{
-		float3 diffuseMap 	= SampleTexture(diffMap, LinearSampler, input.texCoord0*tile, float3(1.0, 1.0, 1.0));
-	}
-	else
-	{
-		float3 diffuseMap 	= SampleTexture(foamMap, LinearSampler, input.texCoord0*tile, float3(1.0, 1.0, 1.0));
-	}
 	float3 diffuseMap 	= SampleTexture(diffMap, LinearSampler, input.texCoord0*tile, float3(1.0, 1.0, 1.0));
 
 	float3 foam 		= SampleTexture(foamMap, LinearSampler, input.texCoord0, float3(1.0, 1.0, 1.0));
@@ -379,11 +390,10 @@ float4 pixel(vertex2pixel input) : SV_TARGET
 /********** TECHNIQUES ******************************/
 /****************************************************/
 
-RasterizerState CullFront
-{
-	CullMode = Front;
-};
 
+/////////////////////
+// BLENDING STATES //
+/////////////////////
 BlendState AlphaBlendingOn
 {
     BlendEnable[0] = TRUE;
@@ -391,10 +401,23 @@ BlendState AlphaBlendingOn
     SrcBlend = SRC_ALPHA;
 };
 
+RasterizerState CullFront
+{
+	CullMode = Front;
+};
+
 technique11 Shaded {
-	pass p0 {
+	pass pTransparentPeel
+	//<
+	//	// Depth-peeling pass for depth-peeling transparency algorithm.
+	//	string drawContext = "transparentPeel";
+	//>
+	{
 		SetRasterizerState(CullFront);
 		SetVertexShader( CompileShader( vs_5_0, vertexNormalMap() ));
+		SetHullShader(NULL);
+		SetDomainShader(NULL);
+		SetGeometryShader(NULL);
 		SetPixelShader(CompileShader(ps_5_0, pixel()));
 	}
 }
