@@ -101,155 +101,9 @@ struct vertex2pixel
 /***** VERTEX SHADER ******************/
 /**************************************/
 
-float3 gerstnerNormal(float3 position, float multiplier, float2 direction)
-{
-	float amp = amplitude*0.025;
-	amp *= multiplier;
-
-	float WL = waveLength;
-	WL *= multiplier;
-
-	float2 D = direction;
-	float w = 2*PI/WL;
-	float Q = crestFactor;
-	float3 P0 = position.xyz;
-	float myPhase = speed * 2*PI/WL;
-
-	float dotX = dot(D, P0.x);
-	float dotY = dot(D, P0.y);
-	float dotP = dot(D, P0);
-
-	float C = cos(w*dotP + (globalTimer*myPhase));
-	float S = sin(w*dotP + (globalTimer*myPhase));
-	float WA = w*amp;
-
-	//float3 N = float3(dotX*WA*C, Q*WA*S, dotY*WA*C);
-	float3 N = float3(dotX*WA*C, Q*WA*S, dotY*WA*C);
-	return N;
-}
-
-float3 gerstnerTangent(float3 position, float multiplier, float2 direction)
-{
-	float amp = amplitude*0.025;
-	amp *= multiplier;
-
-	float WL = waveLength;
-	WL *= multiplier;
-
-	float2 D = direction;
-	float w = 2*PI/WL;
-	float Q = crestFactor;
-	float3 P0 = position.xyz;
-	float myPhase = speed * 2*PI/WL;
-
-	float dotX = dot(D, P0.x);
-	float dotY = dot(D, P0.y);
-	float powDotY = dot(D, pow(P0.y, 2));
-	float dotP = dot(D, P0);
-
-	float C = cos(w*dotP + (globalTimer*myPhase));
-	float S = sin(w*dotP + (globalTimer*myPhase));
-	float WA = w*amp;
-
-	float3 T = float3(Q*dotX*dotY*WA*S, dotY*WA*C, Q*powDotY*WA*S);
-	return T;
-}
-
-float3 gerstnerBinormal(float3 position, float multiplier, float2 direction)
-{
-	float amp = amplitude*0.025;
-	amp *= multiplier;
-
-	float WL = waveLength;
-	WL *= multiplier;
-
-	float2 D = direction;
-	float w = 2*PI/WL;
-	float Q = crestFactor;
-	float3 P0 = position.xyz;
-	float myPhase = speed * 2*PI/WL;
-
-	float dotX = dot(D, P0.x);
-	float dotY = dot(D, P0.y);
-	float powDotX = dot(D, pow(P0.x, 2));
-	float dotP = dot(D, P0);
-
-	float C = cos(w*dotP + (globalTimer*myPhase));
-	float S = sin(w*dotP + (globalTimer*myPhase));
-	float WA = w*amp;
-
-	float3 B = float3(Q*powDotX*WA*S, dotX*WA*C, Q*dotX*dotY*WA*S);
-	return B;
-}
-
-float3 gerstnerWave(float3 position, float multiplier, float2 direction)
-{
-	// Put te vars in a struct!!
-	float amp = amplitude*0.025;
-	amp *= multiplier;
-	
-	float WL = waveLength;
-	WL *= multiplier;
-
-	float2 D = direction;
-
-	float w = 2*PI/WL;
-	float Q = crestFactor;
-	float3 P0 = position.xyz;
-	float myPhase = speed * 2*PI/WL;
-
-	float dotD = dot(D, P0.xz);
-	float C = cos(w*dotD + (globalTimer*myPhase));
-	float S = sin(w*dotD + (globalTimer*myPhase));
-	float3 P = float3(Q*amp*D.x*C, amp * S, Q*amp*D.y*C);
-	return P;
-}
-
 // Static for the time being... Need to make them a bit more dynamic
 static float mulArray[3] = {0.561,1.793,0.697};
 static float2 dirsArray[3] = {float2(0.0, 1.0), float2(1.0, 0.5), float2(0.25, 1.0)};
-
-
-//------------------------------------
-// Internal depth textures for Maya depth-peeling transparency
-//------------------------------------
-#ifdef _MAYA_
-
-	Texture2D transpDepthTexture : transpdepthtexture
-	<
-		string UIWidget = "None";
-	>;
-
-	Texture2D opaqueDepthTexture : opaquedepthtexture
-	<
-		string UIWidget = "None";
-	>;
-
-#endif
-
-SamplerState SamplerShadowDepth
-{
-	Filter = MIN_MAG_MIP_POINT;
-	AddressU = Border;
-	AddressV = Border;
-	BorderColor = float4(1.0f, 1.0f, 1.0f, 1.0f);
-};
-
-void Peel(float3 worldPos, float depth)
-{
-	float currZ = abs( mul( float4(worldPos, 1.0f), view ).z );
-	float4 Pndc  = mul( float4(worldPos, 1.0f), viewPrj );
-	float2 UV = Pndc.xy / Pndc.w * float2(0.5f, -0.5f) + 0.5f;
-	float prevZ = transpDepthTexture.Sample(SamplerShadowDepth, UV).r;
-	float opaqZ = opaqueDepthTexture.Sample(SamplerShadowDepth, UV).r;
-	float bias = 0.00002f;
-	//if (currZ < prevZ * (1.0f + bias) || currZ > opaqZ * (1.0f - bias))
-	if (depth < prevZ * (1.0f + bias) || depth > opaqZ * (1.0f - bias))
-	{
-		discard;
-		//return opaqZ;
-	}
-}
 
 vertex2pixel vertexNormalMap(app2vertex In)
 { 
@@ -276,10 +130,10 @@ vertex2pixel vertexNormalMap(app2vertex In)
 		//sumW += gerstnerWave(In.position, mulVal, dirsArray[i]);
 		// worldSpacePos gives a much smaller scale to work from. Looks better from long distances.
 		// Perhaps a scale value can help achive this same result with in.position....
-		sumW += gerstnerWave(In.position, mulArray[i], dirsArray[i]);
-		sumB += gerstnerBinormal(sumW, mulArray[i], dirsArray[i]);
-		sumT += gerstnerTangent(sumW, mulArray[i], dirsArray[i]);
-		sumN += gerstnerNormal(sumW, mulArray[i], dirsArray[i]);
+		sumW += gerstnerWave(In.position, 	mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, globalTimer, 0);
+		sumB += gerstnerWave(sumW, 			mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, globalTimer, 1);
+		sumT += gerstnerWave(sumW, 			mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, globalTimer, 2);
+		sumN += gerstnerWave(sumW, 			mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, globalTimer, 3);
 	}
 
 	// Calculate final pos, binorm, tangent and normal
@@ -313,21 +167,7 @@ vertex2pixel vertexNormalMap(app2vertex In)
 // SV_TARGET is dx11 style pixel shader
 float4 pixel(vertex2pixel input) : SV_TARGET 
 {	
-	float depth = input.depth;
-	float td = transpDepthTexture.Sample(SamplerShadowDepth, input.position.xy).r;
-	float opaqZ = opaqueDepthTexture.Sample(SamplerShadowDepth, input.position.xy).r;
-	float bias = 0.00002f;
-	td *= (1.0f + bias);
-	opaqZ *= (1.0f - bias);
-	//if (depth < td * (1.0f + bias) || depth > opaqZ * (1.0f - bias))
-	//if (depth < td * (1.0f + bias))
-	//{
-	//	discard;
-	//}
-	//return float4(td, td, td, 1.0f);
 	float3 worldSpacePix = input.positionW;
-	//Peel(worldSpacePix, depth);
-	//Texture sampling
 
 	float3x3 toWorld 	= float3x3(input.worldTangent, input.worldBinormal, input.worldNormal);
 	float3 normal 		= SampleTexture(normalMap, LinearSampler,  input.texCoord0*tile, float3(0.5, 0.5, 1.0))*2-1;
@@ -407,7 +247,7 @@ RasterizerState CullFront
 };
 
 technique11 Shaded {
-	pass pTransparentPeel
+	pass P0
 	//<
 	//	// Depth-peeling pass for depth-peeling transparency algorithm.
 	//	string drawContext = "transparentPeel";
@@ -415,9 +255,6 @@ technique11 Shaded {
 	{
 		SetRasterizerState(CullFront);
 		SetVertexShader( CompileShader( vs_5_0, vertexNormalMap() ));
-		SetHullShader(NULL);
-		SetDomainShader(NULL);
-		SetGeometryShader(NULL);
 		SetPixelShader(CompileShader(ps_5_0, pixel()));
 	}
 }
