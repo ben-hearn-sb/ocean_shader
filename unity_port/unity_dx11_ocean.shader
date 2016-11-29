@@ -6,32 +6,41 @@
 Shader "Custom/dx_11_ocean" {
 	Properties {
 		// Unity inputs for shader params
-		waterColorA 	("waterColorA", Color) = (1,1,1,1)
-		tile 			("Tile", float) = 1.0
-		specIntensity 	("Spec Intensity", range(0, 10)) = 1.0
-		timerScale1 	("Timer Scale 1", range(0, 1)) = 0.2
-		amplitude 		("Amplitude", float) = 0.4
-		waveLength 		("Wavelength", float) = 2.5
-		speed 			("Speed", float) = 2.1
-		crestFactor 	("Crest Factor", float) = 1.0
-		fresBias 		("Fresnel Bias", float) = 0.0
-		fresScale 		("Fresnel Scale", float) = 1.0
-		fresPower 		("Fresnel Power", float) = 5.0
+		waterColorA 	("waterColorA", 	Color) 			= (1,1,1,1)
+		specIntensity 	("Spec Intensity", 	range(0, 10)) 	= 1.0
+		timerScale1 	("Timer Scale 1", 	range(0, 1)) 	= 0.2
 
-		diffMap 		("Diffuse Map", 2D) 	= "white" {}
-		normalMap		("Normal Map", 2D) 		= "bump" {}
-		foamMap			("Foam Map", 2D) 		= "white" {}
-		noiseMap		("Noise Map", 2D) 		= "white" {}
-		cubeMap			("Cube Map", CUBE) 		= "" {}
+		// Wave stuff
+		amplitude 		("Amplitude", 		range(0, 10)) 	= 0.4
+		waveLength 		("Wavelength", 		range(0, 10)) 	= 2.5
+		crestFactor 	("Crest Factor", 	range(0, 10)) 	= 1.0
+		speed 			("Speed", 			range(0, 5)) 	= 1.0
+		dirX 			("Direction X", 	range(-1, 1)) 	= 1.0
+		dirY 			("Direction Y", 	range(-1, 1)) 	= 0.0
+
+		// Fresnel stuff
+		fresBias 		("Fresnel Bias", 	float) 			= 0.0
+		fresScale 		("Fresnel Scale", 	float) 			= 1.0
+		fresPower 		("Fresnel Power", 	float) 			= 5.0
+		
+		// Texture maps
+		diffMap 		("Diffuse Map", 2D) 		= "white" {}
+		normalMap		("Normal Map", 	2D) 		= "bump" {}
+		foamMap			("Foam Map", 	2D) 		= "white" {}
+		noiseMap		("Noise Map", 	2D) 		= "white" {}
+		cubeMap			("Cube Map", 	CUBE) 		= "" {}
 	}
 	SubShader {
 		Pass{
-			Tags { "RenderType"="Opaque" }
-			
+			Blend SrcAlpha OneMinusSrcAlpha
+            ZWrite Off
+            Cull Off
+			Tags { "RenderType"="Opaque" }			
 			CGPROGRAM
 			#pragma vertex vert
 			#pragma fragment frag
 			#include "UnityCG.cginc"
+			#include "common.cginc"
 			//#include "Lighting.cginc"
 
 			uniform sampler2D diffMap; 
@@ -39,9 +48,9 @@ Shader "Custom/dx_11_ocean" {
 			uniform sampler2D foamMap;	
 			uniform sampler2D noiseMap;
 			uniform samplerCUBE cubeMap;
+			uniform sampler2D _CameraDepthTexture; //the depth texture
 
 			uniform fixed4 waterColorA;
-			uniform float tile;
 			uniform float specIntensity;
 			uniform float timerScale1;
 			uniform float amplitude;
@@ -51,11 +60,17 @@ Shader "Custom/dx_11_ocean" {
 			uniform float fresBias;
 			uniform float fresScale;
 			uniform float fresPower;
+			uniform float dirX=1.0;
+			uniform float dirY=0.0;
 
 			uniform float4 diffMap_ST;
 			uniform float4 normalMap_ST;
 			uniform float4 foamMap_ST;
 			uniform float4 noiseMap_ST;
+
+			// Static for the time being... Need to make them a bit more dynamic
+			static float mulArray[3] 	= {0.561, 1.793, 0.697};
+			static float2 dirsArray[3] 	= {float2(0.0, 1.0), float2(1.0, 0.5), float2(0.25, 1.0)};
 
 			// Unity Defined Variables;
 			uniform float4 _LightColor0;
@@ -80,20 +95,54 @@ Shader "Custom/dx_11_ocean" {
 				float3 worldTangent		: TEXCOORD3;
 				float3 worldBinormal	: TEXCOORD4;
 				float4 posWorld			: TEXCOORD5;
+				float4 scrPos			: TEXCOORD6;
 			};
 
 			vertex2frag vert(app2vertex In)
 			{ 
 				vertex2frag Out = (vertex2frag)0;
+
+				float3 sumW = float3(0,0,0);
+				float3 sumB = float3(0,0,0);
+				float3 sumT = float3(0,0,0);
+				float3 sumN = float3(0,0,0);
+				for(int i=0; i < 3; i++)
+				{
+					float2 dirsXY = float2(dirX, dirY);
+					float2 dirsVal = dirsArray[i]*dirsXY;
+					float mulVal = mulArray[i];//* customNoise(dirsVal);
+					//sumW += gerstnerWave(In.position, mulVal, dirsArray[i]);
+					// worldSpacePos gives a much smaller scale to work from. Looks better from long distances.
+					// Perhaps a scale value can help achive this same result with in.position....
+					sumW += gerstnerWave(In.position.xyz, 	mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 0);
+					sumB += gerstnerWave(sumW, 			mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 1);
+					sumT += gerstnerWave(sumW, 			mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 2);
+					sumN += gerstnerWave(sumW, 			mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 3);
+				}
+				// Calculate final pos, binorm, tangent and normal
+				sumW += In.position;
+
+				sumB.x = 1-sumB.x;
+				sumB.z = -sumB.z;
+
+				sumT.x = -sumT.x;
+				sumT.y = 1-sumT.y;
+
+				sumN.x = -sumN.x;
+				sumN.y = 1-sumN.y;
+				sumN.z = -sumN.z;
+
 				// _World2Object is Unity version of WorldInverseTranspose
-				Out.worldNormal = normalize(mul(unity_WorldToObject, In.normal).xyz);
-				//Out.worldTangent = mul(float4(In.tangent.xyz, 0.0), unity_WorldToObject ).xyz;
-				Out.worldTangent = normalize(mul(unity_ObjectToWorld, In.tangent ).xyz);
+				Out.worldNormal = normalize(mul(unity_WorldToObject, In.normal+sumN).xyz);
+				Out.worldTangent = normalize(mul(unity_ObjectToWorld, In.tangent).xyz);
 				Out.worldBinormal = normalize(cross(Out.worldNormal, Out.worldTangent*In.tangent.w)); // tangent.w is specific to Unity
+				Out.worldBinormal += sumB;
 
 			    float4 worldSpacePos = mul(unity_ObjectToWorld, In.position);
     			Out.posWorld = worldSpacePos;
-				Out.position = mul(UNITY_MATRIX_MVP, In.position);
+				Out.position = mul(UNITY_MATRIX_MVP, float4(sumW, In.position.w));
+				Out.scrPos=ComputeScreenPos(Out.position);
+				//Out.scrPos.y = 1 - Out.scrPos.y;
 			    Out.texCoord0 = In.texCoord0;
 
 				// From Unity built in function: _WorldSpaceCameraPos.xyz - mul(_Object2World, v).xyz;
@@ -103,6 +152,15 @@ Shader "Custom/dx_11_ocean" {
 
 	        fixed4 frag (vertex2frag In) : SV_Target
 	        {
+	        	// TODO: Combine this setup with the rest of the gig
+				float depthValue = Linear01Depth (tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(In.scrPos)).r);
+				float4 depth;
+				depth.r = depthValue;
+				depth.g = depthValue;
+				depth.b = depthValue;
+				depth.a =  1;
+				//return depth;
+
 	            float attenuation;
 	            float3 light0Dir;
 				if (0.0 == _WorldSpaceLightPos0.w) // directional light?
