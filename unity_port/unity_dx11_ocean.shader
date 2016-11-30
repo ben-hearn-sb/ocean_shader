@@ -29,16 +29,21 @@ Shader "Custom/dx_11_ocean" {
 		foamMap			("Foam Map", 	2D) 		= "white" {}
 		noiseMap		("Noise Map", 	2D) 		= "white" {}
 		cubeMap			("Cube Map", 	CUBE) 		= "" {}
+
+		_FoamStrength ("Water Depth", Range (0, 10)) = 1
+		_DepthFade ("Depth Fade", Range (0, 10)) = 1
 	}
 	SubShader {
 		Pass{
 			Blend SrcAlpha OneMinusSrcAlpha
-            ZWrite Off
-            Cull Off
-			Tags { "RenderType"="Opaque" }			
+            //ZWrite Off
+            //Cull Off
+			//Tags { "RenderType"="Opaque" }			
+			Tags { "RenderType" = "Transparent" "Queue" = "Transparent" }			
 			CGPROGRAM
 			#pragma vertex vert
 			#pragma fragment frag
+			#pragma fragmentoption ARB_precision_hint_fastest
 			#include "UnityCG.cginc"
 			#include "common.cginc"
 			//#include "Lighting.cginc"
@@ -48,9 +53,8 @@ Shader "Custom/dx_11_ocean" {
 			uniform sampler2D foamMap;	
 			uniform sampler2D noiseMap;
 			uniform samplerCUBE cubeMap;
-			uniform sampler2D _CameraDepthTexture; //the depth texture
 
-			uniform fixed4 waterColorA;
+			uniform float4 waterColorA;
 			uniform float specIntensity;
 			uniform float timerScale1;
 			uniform float amplitude;
@@ -62,6 +66,8 @@ Shader "Custom/dx_11_ocean" {
 			uniform float fresPower;
 			uniform float dirX=1.0;
 			uniform float dirY=0.0;
+			float _FoamStrength;
+			float _DepthFade;
 
 			uniform float4 diffMap_ST;
 			uniform float4 normalMap_ST;
@@ -74,6 +80,7 @@ Shader "Custom/dx_11_ocean" {
 
 			// Unity Defined Variables;
 			uniform float4 _LightColor0;
+			uniform sampler2D _CameraDepthTexture; //the depth texture
 
 			// input from application 
 			struct app2vertex
@@ -101,6 +108,8 @@ Shader "Custom/dx_11_ocean" {
 			vertex2frag vert(app2vertex In)
 			{ 
 				vertex2frag Out = (vertex2frag)0;
+				float4 worldSpacePos = mul(unity_ObjectToWorld, In.position);
+				Out.posWorld = worldSpacePos;
 
 				float3 sumW = float3(0,0,0);
 				float3 sumB = float3(0,0,0);
@@ -111,16 +120,13 @@ Shader "Custom/dx_11_ocean" {
 					float2 dirsXY = float2(dirX, dirY);
 					float2 dirsVal = dirsArray[i]*dirsXY;
 					float mulVal = mulArray[i];//* customNoise(dirsVal);
-					//sumW += gerstnerWave(In.position, mulVal, dirsArray[i]);
-					// worldSpacePos gives a much smaller scale to work from. Looks better from long distances.
-					// Perhaps a scale value can help achive this same result with in.position....
 					sumW += gerstnerWave(In.position.xyz, 	mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 0);
-					sumB += gerstnerWave(sumW, 			mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 1);
-					sumT += gerstnerWave(sumW, 			mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 2);
-					sumN += gerstnerWave(sumW, 			mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 3);
+					sumB += gerstnerWave(sumW, 				mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 1);
+					sumT += gerstnerWave(sumW, 				mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 2);
+					sumN += gerstnerWave(sumW, 				mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 3);
 				}
 				// Calculate final pos, binorm, tangent and normal
-				sumW += In.position;
+				In.position.xyz += sumW;
 
 				sumB.x = 1-sumB.x;
 				sumB.z = -sumB.z;
@@ -138,9 +144,7 @@ Shader "Custom/dx_11_ocean" {
 				Out.worldBinormal = normalize(cross(Out.worldNormal, Out.worldTangent*In.tangent.w)); // tangent.w is specific to Unity
 				Out.worldBinormal += sumB;
 
-			    float4 worldSpacePos = mul(unity_ObjectToWorld, In.position);
-    			Out.posWorld = worldSpacePos;
-				Out.position = mul(UNITY_MATRIX_MVP, float4(sumW, In.position.w));
+				Out.position = mul(UNITY_MATRIX_MVP, In.position);
 				Out.scrPos=ComputeScreenPos(Out.position);
 				//Out.scrPos.y = 1 - Out.scrPos.y;
 			    Out.texCoord0 = In.texCoord0;
@@ -152,15 +156,6 @@ Shader "Custom/dx_11_ocean" {
 
 	        fixed4 frag (vertex2frag In) : SV_Target
 	        {
-	        	// TODO: Combine this setup with the rest of the gig
-				float depthValue = Linear01Depth (tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(In.scrPos)).r);
-				float4 depth;
-				depth.r = depthValue;
-				depth.g = depthValue;
-				depth.b = depthValue;
-				depth.a =  1;
-				//return depth;
-
 	            float attenuation;
 	            float3 light0Dir;
 				if (0.0 == _WorldSpaceLightPos0.w) // directional light?
@@ -213,9 +208,27 @@ Shader "Custom/dx_11_ocean" {
 				float fm = clamp(pow(noiseM, 7),0,1);
 				float3 white = float3(255, 255, 255);
 				float3 withFoam = lerp(resultColor.xyz, white, fm);
-				float4 finalFoam = float4(withFoam, 1);
+				float4 finalFoam = float4(withFoam, 0);
 				//return saturate(color * finalFoam + specular);
-				return saturate(resultColor + specular);
+
+            	// .... accidentally got foam ontop of my wave peaks almost
+            	// Experimented with the depth ranges, Turns out this has both of what I need in it.
+            	// TODO: Get this working like the other script
+            	float4 white2 = float4(255, 255, 255, 0);
+				float sceneZ = LinearEyeDepth (tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(In.scrPos)).r);
+				float objectZ = In.scrPos.z;
+				float intensityFactor = 1 - saturate((sceneZ - objectZ)/_FoamStrength);
+				float depthFadeFactor = 1 - saturate(_DepthFade - (sceneZ - objectZ));
+				//diffuse.a   	*= intensityFactor;
+				//white2.a        *= depthFadeFactor;
+				finalFoam.a        *= depthFadeFactor;
+				//return result;
+				//return saturate(resultColor + specular);
+				float4 res =  saturate(resultColor + specular);
+				res.a *= depthFadeFactor;
+				return res;
+				return lerp(res, white2, intensityFactor);
+
 	            //return saturate(diffuse);
 	        }
 			ENDCG
