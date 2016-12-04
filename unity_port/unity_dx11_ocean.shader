@@ -6,7 +6,8 @@
 Shader "Custom/dx_11_ocean" {
 	Properties {
 		// Unity inputs for shader params
-		waterColorA 	("waterColorA", 	Color) 			= (1,1,1,1)
+		waterColorA 	("Surface Color", 	Color) 			= (1,1,1,1)
+		waterColorB 	("Under Color", 	Color) 			= (1,1,1,1)
 		specIntensity 	("Spec Intensity", 	range(0, 10)) 	= 1.0
 		timerScale1 	("Timer Scale 1", 	range(0, 1)) 	= 0.2
 
@@ -27,19 +28,30 @@ Shader "Custom/dx_11_ocean" {
 		diffMap 		("Diffuse Map", 2D) 		= "white" {}
 		normalMap		("Normal Map", 	2D) 		= "bump" {}
 		foamMap			("Foam Map", 	2D) 		= "white" {}
+		foamMask		("Foam Mask", 	2D) 		= "white" {}
 		noiseMap		("Noise Map", 	2D) 		= "white" {}
 		cubeMap			("Cube Map", 	CUBE) 		= "" {}
 
-		_FoamStrength ("Water Depth", Range (0, 10)) = 1
-		_DepthFade ("Depth Fade", Range (0, 10)) = 1
+		_FoamStrength ("Foam Strength", Range (0, 10)) = 1
+		_ShoreFoamStrength ("Shore Foam Strength", Range (0, 10)) = 1
+		//_ShoreFoamTransparency ("Shore Foam Transparency", Range (0, 10)) = 1
+		_WaterDepth ("Water Depth",	 Range (0, 5)) = 1
+		_DepthFade ("Depth Fade", Range (0, 10)) = 0.5
+		_FoamFade ("Foam Fade", Range (0, 10)) = 0.5
+		_TranslucentStrength ("Overall Translucency", Range (0, 1)) = 1.0
+		_DepthColorSwitch ("Depth Colour Switch", Range (0, 10)) = 1.0
+		diffuseStrength ("Diffuse Strength", Range (0, 1)) = 1.0
 	}
 	SubShader {
+		Tags { "RenderType" = "Transparent" "Queue" = "Transparent" }	
+		//Blend SrcAlpha OneMinusSrcAlpha
 		Pass{
 			Blend SrcAlpha OneMinusSrcAlpha
+			Tags { "RenderType" = "Transparent" "Queue" = "Transparent" }	
             //ZWrite Off
             //Cull Off
 			//Tags { "RenderType"="Opaque" }			
-			Tags { "RenderType" = "Transparent" "Queue" = "Transparent" }			
+					
 			CGPROGRAM
 			#pragma vertex vert
 			#pragma fragment frag
@@ -48,13 +60,15 @@ Shader "Custom/dx_11_ocean" {
 			#include "common.cginc"
 			//#include "Lighting.cginc"
 
-			uniform sampler2D diffMap; 
+			uniform sampler2D diffMap;
 			uniform sampler2D normalMap;
-			uniform sampler2D foamMap;	
+			uniform sampler2D foamMap;
+			uniform sampler2D foamMask;
 			uniform sampler2D noiseMap;
 			uniform samplerCUBE cubeMap;
 
 			uniform float4 waterColorA;
+			uniform float4 waterColorB;
 			uniform float specIntensity;
 			uniform float timerScale1;
 			uniform float amplitude;
@@ -67,11 +81,19 @@ Shader "Custom/dx_11_ocean" {
 			uniform float dirX=1.0;
 			uniform float dirY=0.0;
 			float _FoamStrength;
+			float _ShoreFoamStrength;
+			//float _ShoreFoamTransparency;
+			float _WaterDepth;
 			float _DepthFade;
+			float _FoamFade;
+			float _TranslucentStrength;
+			float _DepthColorSwitch;
+			float diffuseStrength;
 
 			uniform float4 diffMap_ST;
 			uniform float4 normalMap_ST;
 			uniform float4 foamMap_ST;
+			uniform float4 foamMask_ST;
 			uniform float4 noiseMap_ST;
 
 			// Static for the time being... Need to make them a bit more dynamic
@@ -148,6 +170,13 @@ Shader "Custom/dx_11_ocean" {
 				Out.scrPos=ComputeScreenPos(Out.position);
 				//Out.scrPos.y = 1 - Out.scrPos.y;
 			    Out.texCoord0 = In.texCoord0;
+			    float sumTimer = 0.0;
+			    for(int i=0; i < 3; i++)
+			    {
+			    	sumTimer += (_Time.y);
+			    }
+
+			    Out.texCoord0.xy += (_Time.y*timerScale1);
 
 				// From Unity built in function: _WorldSpaceCameraPos.xyz - mul(_Object2World, v).xyz;
 				Out.viewVec = WorldSpaceViewDir(In.position);
@@ -171,65 +200,56 @@ Shader "Custom/dx_11_ocean" {
 					light0Dir 			= normalize(pixToLight);
 				}
 
+				float sceneZ = LinearEyeDepth (tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(In.scrPos)).r);
+				float objectZ = In.scrPos.z;
+				float intensityFactor = 1 - saturate((sceneZ - objectZ)/_WaterDepth);
+				float depthFadeFactor = 1 - saturate(_DepthFade - (sceneZ - objectZ));
+				float foamFadeFactor = 1 - saturate(_FoamFade - (sceneZ - objectZ));
+
+				// Textures
 	        	float3x3 toWorld 	= float3x3(In.worldTangent, In.worldBinormal, In.worldNormal);
 	            float4 diffuse 		= tex2D(diffMap, diffMap_ST.xy * In.texCoord0 + diffMap_ST.zw);
 	            float3 normal 		= tex2D(normalMap, normalMap_ST.xy * In.texCoord0+normalMap_ST.zw)*2-1;
 	            float3 bumpWorld 	= normalize(mul(normal,toWorld));
-	            float3 noiseM 		= tex2D(noiseMap, noiseMap_ST.xy * In.texCoord0 + noiseMap_ST.zw);
+	            float4 noiseM 		= tex2D(noiseMap, noiseMap_ST.xy * In.texCoord0 + noiseMap_ST.zw);
+	            float4 foamTex 		= tex2D(foamMap, foamMap_ST.xy * In.texCoord0 + foamMap_ST.zw);
+	            float4 foamMaskTex 	= tex2D(foamMask, foamMask_ST.xy * In.texCoord0 + foamMask_ST.zw);
 
+            	// Reflection Stuff
             	float3 V = In.viewVec;
 				float3 R = reflect(V, bumpWorld);
 				float3 refraction = refract(V, bumpWorld, 1.3333);
-
 			    float4 reflectedColor = texCUBE(cubeMap, -R);
     			float4 refractedColor = texCUBE(cubeMap, -refraction);
     			float reflectionCoefficient = fresBias + fresScale * pow(1.0 - dot(normalize(V), In.worldNormal), fresPower);
 
-				//pow(max(0.0, dot(reflect(-lightDirection, normalDirection), viewDirection)), _Shininess);
+    			// Specular stuff
 				float3 reflection = reflect(bumpWorld, -light0Dir);
-				//float3 reflection = reflect(light0Dir, bumpWorld);
 				float4 specular = dot(normalize(reflection), normalize(V));
 				specular = pow(specular, 256);
 				specular *= specIntensity * _LightColor0;
 
 				float4 color = waterColorA;
-				float4 red = float4(255, 0, 0, 0);
-				//color.xyz = lerp(diffuse.xyz, color, reflectionCoefficient);
 				color.xyz *= _LightColor0; // _LightColor0 comes premultiplied with intensity
 				float diffLight = saturate(dot(bumpWorld, light0Dir));
 				color *= diffLight;
-				color += diffuse;
+				color += (diffuse*diffuseStrength);
 
 				float3 cFinal = lerp(reflectedColor, refractedColor, reflectionCoefficient);
 				float4 final = float4(cFinal, 1);
-				//float4 resultColor = lerp(color, reflectedColor, reflectionCoefficient);
 				float4 resultColor = lerp(color, final, reflectionCoefficient);
 
-				float fm = clamp(pow(noiseM, 7),0,1);
-				float3 white = float3(255, 255, 255);
-				float3 withFoam = lerp(resultColor.xyz, white, fm);
-				float4 finalFoam = float4(withFoam, 0);
-				//return saturate(color * finalFoam + specular);
+				// Surface Color
+				float fm 		= clamp(pow(foamTex, 7),0,1);
+				resultColor 	= saturate(lerp(resultColor, foamTex*_FoamStrength, fm) + specular);
+				resultColor.a 	*= (_TranslucentStrength*depthFadeFactor);
+				foamTex.a *= pow(foamMaskTex, depthFadeFactor);
 
-            	// .... accidentally got foam ontop of my wave peaks almost
-            	// Experimented with the depth ranges, Turns out this has both of what I need in it.
-            	// TODO: Get this working like the other script
-            	float4 white2 = float4(255, 255, 255, 0);
-				float sceneZ = LinearEyeDepth (tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(In.scrPos)).r);
-				float objectZ = In.scrPos.z;
-				float intensityFactor = 1 - saturate((sceneZ - objectZ)/_FoamStrength);
-				float depthFadeFactor = 1 - saturate(_DepthFade - (sceneZ - objectZ));
-				//diffuse.a   	*= intensityFactor;
-				//white2.a        *= depthFadeFactor;
-				finalFoam.a        *= depthFadeFactor;
-				//return result;
-				//return saturate(resultColor + specular);
-				float4 res =  saturate(resultColor + specular);
-				res.a *= depthFadeFactor;
-				return res;
-				return lerp(res, white2, intensityFactor);
-
-	            //return saturate(diffuse);
+				float4 water = lerp(waterColorB, resultColor, saturate(depthFadeFactor+(1.0/_DepthColorSwitch))); // Switching between surface & depth colors
+				float4 shoreFoam = lerp(water, foamTex*_ShoreFoamStrength, foamMaskTex);
+				shoreFoam.a *= foamFadeFactor;
+				float4 finalC = lerp(water, shoreFoam, intensityFactor);
+				return finalC;
 	        }
 			ENDCG
 		}
