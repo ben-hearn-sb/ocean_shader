@@ -98,7 +98,7 @@ Shader "Custom/dx_11_ocean" {
 
 			// Static for the time being... Need to make them a bit more dynamic
 			static float mulArray[3] 	= {0.561, 1.793, 0.697};
-			static float2 dirsArray[3] 	= {float2(0.0, 1.0), float2(1.0, 0.5), float2(0.25, 1.0)};
+			static float2 dirsArray[3] 	= {float2(0, 1.0), float2(1.0, 0.5), float2(0.25, 1.0)};
 
 			// Unity Defined Variables;
 			uniform float4 _LightColor0;
@@ -137,12 +137,14 @@ Shader "Custom/dx_11_ocean" {
 				float3 sumB = float3(0,0,0);
 				float3 sumT = float3(0,0,0);
 				float3 sumN = float3(0,0,0);
+				float2 dirsXY = float2(dirX, dirY);
+				//sumW = gerstnerWave(In.position, 	1, dirsXY, amplitude, waveLength, crestFactor, speed, _Time.y, 0);
 				for(int i=0; i < 3; i++)
 				{
-					float2 dirsXY = float2(dirX, dirY);
+					//float2 dirsVal = dirsArray[i]*dirsXY;
 					float2 dirsVal = dirsArray[i]*dirsXY;
-					float mulVal = mulArray[i];//* customNoise(dirsVal);
-					sumW += gerstnerWave(In.position.xyz, 	mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 0);
+					float mulVal = mulArray[i]*2-1;//* customNoise(dirsVal);
+					sumW += gerstnerWave(In.position, 		mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 0);
 					sumB += gerstnerWave(sumW, 				mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 1);
 					sumT += gerstnerWave(sumW, 				mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 2);
 					sumN += gerstnerWave(sumW, 				mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 3);
@@ -176,13 +178,14 @@ Shader "Custom/dx_11_ocean" {
 			    	sumTimer += (_Time.y);
 			    }
 
-			    Out.texCoord0.xy += (_Time.y*timerScale1);
+			    Out.texCoord0.x += (_Time.y*timerScale1*0.05);
 
 				// From Unity built in function: _WorldSpaceCameraPos.xyz - mul(_Object2World, v).xyz;
 				Out.viewVec = WorldSpaceViewDir(In.position);
 			    return Out;
 			}
 
+			static float2 texOffset[5] 	= {float2(0, 1.0), float2(1.0, 0.5), float2(0.25, 1.0), float2(1.75, 0.25), float2(1.25, 1.0)};
 	        fixed4 frag (vertex2frag In) : SV_Target
 	        {
 	            float attenuation;
@@ -214,6 +217,20 @@ Shader "Custom/dx_11_ocean" {
 	            float4 noiseM 		= tex2D(noiseMap, noiseMap_ST.xy * In.texCoord0 + noiseMap_ST.zw);
 	            float4 foamTex 		= tex2D(foamMap, foamMap_ST.xy * In.texCoord0 + foamMap_ST.zw);
 	            float4 foamMaskTex 	= tex2D(foamMask, foamMask_ST.xy * In.texCoord0 + foamMask_ST.zw);
+	            
+	            // TODO: Experiment with cos & sin to get rolling scroll
+	            for(int i=0; i<5; i++)
+	            {
+	            	//tc = sin(In.texCoord0);
+	            	float2 offset = sin(In.texCoord0 + texOffset[i]* float2(dirX, dirY));
+	            	//float2 offset = sin(In.texCoord0 + texOffset[i]* float2(dirX, dirY));
+	            	//offset += cos(In.texCoord0 + texOffset[i]* float2(dirX, dirY));
+	            	foamMaskTex += tex2D(foamMask, foamMask_ST.xy * offset + foamMask_ST.zw);
+	            }
+	            //foamMaskTex += foamMaskTex*0.75;
+	            //foamMaskTex += foamMaskTex*0.48;
+	            //noiseM.a *= pow(foamMaskTex, depthFadeFactor);
+	            //foamMaskTex += noiseM;
 
             	// Reflection Stuff
             	float3 V = In.viewVec;
@@ -221,6 +238,7 @@ Shader "Custom/dx_11_ocean" {
 				float3 refraction = refract(V, bumpWorld, 1.3333);
 			    float4 reflectedColor = texCUBE(cubeMap, -R);
     			float4 refractedColor = texCUBE(cubeMap, -refraction);
+    			//refractedColor = lerp(waterColorA, refractedColor, intensityFactor);
     			float reflectionCoefficient = fresBias + fresScale * pow(1.0 - dot(normalize(V), In.worldNormal), fresPower);
 
     			// Specular stuff
@@ -229,6 +247,7 @@ Shader "Custom/dx_11_ocean" {
 				specular = pow(specular, 256);
 				specular *= specIntensity * _LightColor0;
 
+				// Lighting & Color
 				float4 color = waterColorA;
 				color.xyz *= _LightColor0; // _LightColor0 comes premultiplied with intensity
 				float diffLight = saturate(dot(bumpWorld, light0Dir));
@@ -244,6 +263,7 @@ Shader "Custom/dx_11_ocean" {
 				resultColor 	= saturate(lerp(resultColor, foamTex*_FoamStrength, fm) + specular);
 				resultColor.a 	*= (_TranslucentStrength*depthFadeFactor);
 				foamTex.a *= pow(foamMaskTex, depthFadeFactor);
+				//foamTex.a *= pow(noiseM, depthFadeFactor);
 
 				float4 water = lerp(waterColorB, resultColor, saturate(depthFadeFactor+(1.0/_DepthColorSwitch))); // Switching between surface & depth colors
 				float4 shoreFoam = lerp(water, foamTex*_ShoreFoamStrength, foamMaskTex);
