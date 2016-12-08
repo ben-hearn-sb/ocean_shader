@@ -185,7 +185,8 @@ Shader "Custom/dx_11_ocean" {
 			    return Out;
 			}
 
-			static float2 texOffset[5] 	= {float2(0, 1.0), float2(1.0, 0.5), float2(0.25, 1.0), float2(1.75, 0.25), float2(1.25, 1.0)};
+			//static float2 texOffset[5] 	= {float2(0.65, 1.0), float2(1.43, 0.5), float2(0.25, 1.0), float2(1.75, 0.25), float2(1.25, 1.0)};
+			static float texOffset[5] 	= {1.15, 0.1, 0.25, 0.5, 0.75};
 	        fixed4 frag (vertex2frag In) : SV_Target
 	        {
 	            float attenuation;
@@ -220,13 +221,17 @@ Shader "Custom/dx_11_ocean" {
 	            
 	            // TODO: Experiment with cos & sin to get rolling scroll
 	            for(int i=0; i<5; i++)
-	            {
-	            	//tc = sin(In.texCoord0);
-	            	float2 offset = sin(In.texCoord0 + texOffset[i]* float2(dirX, dirY));
-	            	//float2 offset = sin(In.texCoord0 + texOffset[i]* float2(dirX, dirY));
-	            	//offset += cos(In.texCoord0 + texOffset[i]* float2(dirX, dirY));
-	            	foamMaskTex += tex2D(foamMask, foamMask_ST.xy * offset + foamMask_ST.zw);
-	            }
+				{
+		           	//tc = sin(In.texCoord0);
+		           	//float2 offset = sin(In.texCoord0 + texOffset[i] * float2(dirX, dirY));
+		           	float offset = sin(texOffset[i]*dirX);
+		           	offset *= cos(texOffset[i]*dirX);
+		           	//float2 offset = sin(In.texCoord0 + texOffset[i]* float2(dirX, dirY));
+		           	//offset += cos(In.texCoord0 + texOffset[i]* float2(dirX, dirY));
+		           	float2 xyTile = foamMask_ST.xy*texOffset[i];
+		           	float2 zwTile = foamMask_ST.zw*texOffset[i];
+		           	foamMaskTex += tex2D(foamMask, xyTile * (In.texCoord0+offset)*2-1 + zwTile);
+				}
 	            //foamMaskTex += foamMaskTex*0.75;
 	            //foamMaskTex += foamMaskTex*0.48;
 	            //noiseM.a *= pow(foamMaskTex, depthFadeFactor);
@@ -263,6 +268,7 @@ Shader "Custom/dx_11_ocean" {
 				resultColor 	= saturate(lerp(resultColor, foamTex*_FoamStrength, fm) + specular);
 				resultColor.a 	*= (_TranslucentStrength*depthFadeFactor);
 				foamTex.a *= pow(foamMaskTex, depthFadeFactor);
+				foamTex+= resultColor;
 				//foamTex.a *= pow(noiseM, depthFadeFactor);
 
 				float4 water = lerp(waterColorB, resultColor, saturate(depthFadeFactor+(1.0/_DepthColorSwitch))); // Switching between surface & depth colors
