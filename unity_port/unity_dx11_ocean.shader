@@ -34,6 +34,7 @@ Shader "Custom/dx_11_ocean" {
 
 		_FoamStrength ("Foam Strength", Range (0, 10)) = 1
 		_ShoreFoamStrength ("Shore Foam Strength", Range (0, 10)) = 1
+		_ShoreFoamOpacity ("Shore Foam Opacity", Range (0, 10)) = 1
 		//_ShoreFoamTransparency ("Shore Foam Transparency", Range (0, 10)) = 1
 		_WaterDepth ("Water Depth",	 Range (0, 5)) = 1
 		_DepthFade ("Depth Fade", Range (0, 10)) = 0.5
@@ -82,6 +83,7 @@ Shader "Custom/dx_11_ocean" {
 			uniform float dirY=0.0;
 			float _FoamStrength;
 			float _ShoreFoamStrength;
+			float _ShoreFoamOpacity;
 			//float _ShoreFoamTransparency;
 			float _WaterDepth;
 			float _DepthFade;
@@ -256,26 +258,27 @@ Shader "Custom/dx_11_ocean" {
 				float4 color = waterColorA;
 				color.xyz *= _LightColor0; // _LightColor0 comes premultiplied with intensity
 				float diffLight = saturate(dot(bumpWorld, light0Dir));
-				color *= diffLight;
-				color += (diffuse*diffuseStrength);
+				//color *= diffLight;
+				//color += (diffuse*diffuseStrength);
 
 				float3 cFinal = lerp(reflectedColor, refractedColor, reflectionCoefficient);
 				float4 final = float4(cFinal, 1);
 				float4 resultColor = lerp(color, final, reflectionCoefficient);
 
 				// Surface Color
+				float waterDepthFactor = saturate((sceneZ - objectZ)/_WaterDepth);
 				float fm 		= clamp(pow(foamTex, 7),0,1);
 				resultColor 	= saturate(lerp(resultColor, foamTex*_FoamStrength, fm) + specular);
-				resultColor.a 	*= (_TranslucentStrength*depthFadeFactor);
-				foamTex.a *= pow(foamMaskTex, depthFadeFactor);
-				foamTex+= resultColor;
-				//foamTex.a *= pow(noiseM, depthFadeFactor);
+				resultColor.a 	*= waterDepthFactor;
 
-				float4 water = lerp(waterColorB, resultColor, saturate(depthFadeFactor+(1.0/_DepthColorSwitch))); // Switching between surface & depth colors
-				float4 shoreFoam = lerp(water, foamTex*_ShoreFoamStrength, foamMaskTex);
-				shoreFoam.a *= foamFadeFactor;
-				float4 finalC = lerp(water, shoreFoam, intensityFactor);
-				return finalC;
+				foamTex.a *= foamMaskTex*_ShoreFoamOpacity;
+				foamTex*=_ShoreFoamStrength;
+
+				waterColorB.a *= depthFadeFactor;
+
+				float4 water = lerp(waterColorB, resultColor, pow(waterDepthFactor, 1.0/_DepthColorSwitch)); // Switching between surface & depth colors
+				water = lerp(foamTex, water, pow(waterDepthFactor, foamFadeFactor));
+				return water;
 	        }
 			ENDCG
 		}
