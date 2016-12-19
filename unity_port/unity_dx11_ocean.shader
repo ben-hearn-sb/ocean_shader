@@ -44,7 +44,7 @@ Shader "Custom/dx_11_ocean" {
 		diffuseStrength ("Diffuse Strength", Range (0, 1)) = 1.0
 	}
 	SubShader {
-		Tags { "RenderType" = "Transparent" "Queue" = "Transparent" }	
+		Tags { "RenderType" = "Opaque" "Queue" = "Transparent" "IgnoreProjector"="True"}	
 		//Blend SrcAlpha OneMinusSrcAlpha
 
 		// Pass that renders the scene geometry into a texture
@@ -54,8 +54,8 @@ Shader "Custom/dx_11_ocean" {
             Tags { "LightMode" = "Always" }
         }
 		Pass{
-			Blend SrcAlpha OneMinusSrcAlpha
-			Tags { "RenderType" = "Transparent" "Queue" = "Transparent" }	
+			Blend SrcAlpha OneMinusSrcAlpha 
+			//Tags { "RenderType" = "Transparent" "Queue" = "Transparent" }	
             //ZWrite Off
             //Cull Off
 			//Tags { "RenderType"="Opaque" }			
@@ -239,24 +239,21 @@ Shader "Custom/dx_11_ocean" {
 	        	float3x3 toWorld 	= float3x3(In.worldTangent, In.worldBinormal, In.worldNormal);
 	            float4 diffuse 		= tex2D(diffMap, diffMap_ST.xy * In.texCoord0 + diffMap_ST.zw);
 	            float3 normal 		= tex2D(normalMap, normalMap_ST.xy * In.texCoord0 + normalMap_ST.zw)*2-1;
+	            float3 refrNormal 	= tex2D(normalMap, 1.5*In.texCoord0)*2-1;
 	            float3 bumpWorld 	= normalize(mul(normal,toWorld));
 	            float4 noiseM 		= tex2D(noiseMap, noiseMap_ST.xy * In.texCoord0 + noiseMap_ST.zw);
 	            float4 foamTex 		= tex2D(foamMap, foamMap_ST.xy * In.texCoord0 + foamMap_ST.zw);
 	            float4 foamMaskTex 	= tex2D(foamMask, foamMask_ST.xy * In.texCoord0 + foamMask_ST.zw);
 
-	            // Refraction testing
-	            float distortion = 100.0;
-	            float2 offsetA = normal * _GrabTexture_TexelSize.xy * distortion;
-	            float2 offsetB = normal * _GrabTexture_TexelSize.xy;
+	            ////////// Refraction testing /////////////
+            	float distortion = 500.0;
+            	float3 vRefrBump = normalize(normal).xyz * float3(0.075, 0.075, 1.0);
+            	float3 refracted = refrNormal * abs(refrNormal);
 	            float4 projA = In.uvRefr;
-	            float4 projB = In.uvRefr;
-            	projA.xy = offsetA * In.uvRefr.z + In.uvRefr.xy;
-            	projB.xy = offsetB * In.uvRefr.z + In.uvRefr.xy;
-            	float4 underWaterRefrA = tex2Dproj( _GrabTexture, UNITY_PROJ_COORD(projA));
-            	float4 underWaterRefrB = tex2Dproj( _GrabTexture, UNITY_PROJ_COORD(projB));
-            	float4 underWaterRefr = underWaterRefrB * underWaterRefrA.w + underWaterRefrA * (1 - underWaterRefrA.w);
-
-            	half3 refracted = i.normal * abs(i.normal);
+            	refracted.xy *= _GrabTexture_TexelSize.xy;
+            	projA.xy = refracted.xy * distortion + In.uvRefr.xy;
+            	
+            	float4 underWaterRefr = tex2Dproj( _GrabTexture, projA);
 	            
 	            // TODO: Experiment with cos & sin to get rolling scroll
 	            for(int i=0; i<5; i++)
