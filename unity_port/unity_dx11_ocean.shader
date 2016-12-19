@@ -46,6 +46,13 @@ Shader "Custom/dx_11_ocean" {
 	SubShader {
 		Tags { "RenderType" = "Transparent" "Queue" = "Transparent" }	
 		//Blend SrcAlpha OneMinusSrcAlpha
+
+		// Pass that renders the scene geometry into a texture
+        GrabPass 
+        {
+            Name "BASE"
+            Tags { "LightMode" = "Always" }
+        }
 		Pass{
 			Blend SrcAlpha OneMinusSrcAlpha
 			Tags { "RenderType" = "Transparent" "Queue" = "Transparent" }	
@@ -67,6 +74,10 @@ Shader "Custom/dx_11_ocean" {
 			uniform sampler2D foamMask;
 			uniform sampler2D noiseMap;
 			uniform samplerCUBE cubeMap;
+
+			// Grab pass texture outputs
+			sampler2D _GrabTexture;
+			float4 _GrabTexture_TexelSize;
 
 			uniform float4 waterColorA;
 			uniform float4 waterColorB;
@@ -111,7 +122,6 @@ Shader "Custom/dx_11_ocean" {
 			{ 
 				float4 position			: POSITION;
 				float2 texCoord0		: TEXCOORD0;
-				float2 texCoord1		: TEXCOORD1;
 				float4 tangent			: TANGENT;
 				float3 normal			: NORMAL;
 			}; 
@@ -127,6 +137,7 @@ Shader "Custom/dx_11_ocean" {
 				float3 worldBinormal	: TEXCOORD4;
 				float4 posWorld			: TEXCOORD5;
 				float4 scrPos			: TEXCOORD6;
+				float4 uvRefr			: TEXCOORD7;
 			};
 
 			vertex2frag vert(app2vertex In)
@@ -174,6 +185,7 @@ Shader "Custom/dx_11_ocean" {
 				Out.scrPos=ComputeScreenPos(Out.position);
 				//Out.scrPos.y = 1 - Out.scrPos.y;
 			    Out.texCoord0 = In.texCoord0;
+
 			    float sumTimer = 0.0;
 			    for(int i=0; i < 3; i++)
 			    {
@@ -184,16 +196,26 @@ Shader "Custom/dx_11_ocean" {
 
 				// From Unity built in function: _WorldSpaceCameraPos.xyz - mul(_Object2World, v).xyz;
 				Out.viewVec = WorldSpaceViewDir(In.position);
+
+	            #if UNITY_UV_STARTS_AT_TOP
+            	float scale = -1.0;
+            	#else
+            	float scale = 1.0;
+            	#endif
+            	Out.uvRefr.xy = (float2(Out.position.x, Out.position.y*scale) + Out.position.w) * 0.5;
+            	Out.uvRefr.zw = Out.position.zw;
+
 			    return Out;
 			}
 
 			//static float2 texOffset[5] 	= {float2(0.65, 1.0), float2(1.43, 0.5), float2(0.25, 1.0), float2(1.75, 0.25), float2(1.25, 1.0)};
 			static float texOffset[5] 	= {1.15, 0.1, 0.25, 0.5, 0.75};
 	        fixed4 frag (vertex2frag In) : SV_Target
-	        {
+	        {	
+	        	// Lighting
 	            float attenuation;
 	            float3 light0Dir;
-				if (0.0 == _WorldSpaceLightPos0.w) // directional light?
+				if (0.0 == _WorldSpaceLightPos0.w) // directional light
 				{
 					attenuation = 1.0;
 					light0Dir 	= normalize(_WorldSpaceLightPos0.xyz);
@@ -206,6 +228,7 @@ Shader "Custom/dx_11_ocean" {
 					light0Dir 			= normalize(pixToLight);
 				}
 
+				// Depth calculations
 				float sceneZ = LinearEyeDepth (tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(In.scrPos)).r);
 				float objectZ = In.scrPos.z;
 				float intensityFactor = 1 - saturate((sceneZ - objectZ)/_WaterDepth);
@@ -215,29 +238,35 @@ Shader "Custom/dx_11_ocean" {
 				// Textures
 	        	float3x3 toWorld 	= float3x3(In.worldTangent, In.worldBinormal, In.worldNormal);
 	            float4 diffuse 		= tex2D(diffMap, diffMap_ST.xy * In.texCoord0 + diffMap_ST.zw);
-	            float3 normal 		= tex2D(normalMap, normalMap_ST.xy * In.texCoord0+normalMap_ST.zw)*2-1;
+	            float3 normal 		= tex2D(normalMap, normalMap_ST.xy * In.texCoord0 + normalMap_ST.zw)*2-1;
 	            float3 bumpWorld 	= normalize(mul(normal,toWorld));
 	            float4 noiseM 		= tex2D(noiseMap, noiseMap_ST.xy * In.texCoord0 + noiseMap_ST.zw);
 	            float4 foamTex 		= tex2D(foamMap, foamMap_ST.xy * In.texCoord0 + foamMap_ST.zw);
 	            float4 foamMaskTex 	= tex2D(foamMask, foamMask_ST.xy * In.texCoord0 + foamMask_ST.zw);
+
+	            // Refraction testing
+	            float distortion = 100.0;
+	            float2 offsetA = normal * _GrabTexture_TexelSize.xy * distortion;
+	            float2 offsetB = normal * _GrabTexture_TexelSize.xy;
+	            float4 projA = In.uvRefr;
+	            float4 projB = In.uvRefr;
+            	projA.xy = offsetA * In.uvRefr.z + In.uvRefr.xy;
+            	projB.xy = offsetB * In.uvRefr.z + In.uvRefr.xy;
+            	float4 underWaterRefrA = tex2Dproj( _GrabTexture, UNITY_PROJ_COORD(projA));
+            	float4 underWaterRefrB = tex2Dproj( _GrabTexture, UNITY_PROJ_COORD(projB));
+            	float4 underWaterRefr = underWaterRefrB * underWaterRefrA.w + underWaterRefrA * (1 - underWaterRefrA.w);
+
+            	half3 refracted = i.normal * abs(i.normal);
 	            
 	            // TODO: Experiment with cos & sin to get rolling scroll
 	            for(int i=0; i<5; i++)
 				{
-		           	//tc = sin(In.texCoord0);
-		           	//float2 offset = sin(In.texCoord0 + texOffset[i] * float2(dirX, dirY));
 		           	float offset = sin(texOffset[i]*dirX);
 		           	offset *= cos(texOffset[i]*dirX);
-		           	//float2 offset = sin(In.texCoord0 + texOffset[i]* float2(dirX, dirY));
-		           	//offset += cos(In.texCoord0 + texOffset[i]* float2(dirX, dirY));
 		           	float2 xyTile = foamMask_ST.xy*texOffset[i];
 		           	float2 zwTile = foamMask_ST.zw*texOffset[i];
 		           	foamMaskTex += tex2D(foamMask, xyTile * (In.texCoord0+offset)*2-1 + zwTile);
 				}
-	            //foamMaskTex += foamMaskTex*0.75;
-	            //foamMaskTex += foamMaskTex*0.48;
-	            //noiseM.a *= pow(foamMaskTex, depthFadeFactor);
-	            //foamMaskTex += noiseM;
 
             	// Reflection Stuff
             	float3 V = In.viewVec;
@@ -245,7 +274,6 @@ Shader "Custom/dx_11_ocean" {
 				float3 refraction = refract(V, bumpWorld, 1.3333);
 			    float4 reflectedColor = texCUBE(cubeMap, -R);
     			float4 refractedColor = texCUBE(cubeMap, -refraction);
-    			//refractedColor = lerp(waterColorA, refractedColor, intensityFactor);
     			float reflectionCoefficient = fresBias + fresScale * pow(1.0 - dot(normalize(V), In.worldNormal), fresPower);
 
     			// Specular stuff
@@ -256,11 +284,14 @@ Shader "Custom/dx_11_ocean" {
 
 				// Lighting & Color
 				float4 color = waterColorA;
+				color *= underWaterRefr;
+				return color;
 				color.xyz *= _LightColor0; // _LightColor0 comes premultiplied with intensity
 				float diffLight = saturate(dot(bumpWorld, light0Dir));
 				//color *= diffLight;
 				//color += (diffuse*diffuseStrength);
 
+				// Initial color calculation
 				float3 cFinal = lerp(reflectedColor, refractedColor, reflectionCoefficient);
 				float4 final = float4(cFinal, 1);
 				float4 resultColor = lerp(color, final, reflectionCoefficient);
@@ -275,7 +306,6 @@ Shader "Custom/dx_11_ocean" {
 				foamTex*=_ShoreFoamStrength;
 
 				waterColorB.a *= depthFadeFactor;
-
 				float4 water = lerp(waterColorB, resultColor, pow(waterDepthFactor, 1.0/_DepthColorSwitch)); // Switching between surface & depth colors
 				water = lerp(foamTex, water, pow(waterDepthFactor, foamFadeFactor));
 				return water;
