@@ -39,9 +39,9 @@ Shader "Custom/dx_11_ocean" {
 		_WaterDepth ("Water Depth",	 Range (0, 5)) = 1
 		_DepthFade ("Depth Fade", Range (0, 10)) = 0.5
 		_FoamFade ("Foam Fade", Range (0, 10)) = 0.5
-		_TranslucentStrength ("Overall Translucency", Range (0, 1)) = 1.0
+		//_TranslucentStrength ("Overall Translucency", Range (0, 1)) = 1.0
 		_DepthColorSwitch ("Depth Colour Switch", Range (0, 10)) = 1.0
-		diffuseStrength ("Diffuse Strength", Range (0, 1)) = 1.0
+		//diffuseStrength ("Diffuse Strength", Range (0, 1)) = 1.0
 	}
 	SubShader {
 		Tags { "RenderType" = "Opaque" "Queue" = "Transparent" "IgnoreProjector"="True"}	
@@ -181,8 +181,9 @@ Shader "Custom/dx_11_ocean" {
 				Out.worldBinormal = normalize(cross(Out.worldNormal, Out.worldTangent*In.tangent.w)); // tangent.w is specific to Unity
 				Out.worldBinormal += sumB;
 
+				// Final output position & screenposition
 				Out.position = mul(UNITY_MATRIX_MVP, In.position);
-				Out.scrPos=ComputeScreenPos(Out.position);
+				Out.scrPos = ComputeScreenPos(Out.position);
 				//Out.scrPos.y = 1 - Out.scrPos.y;
 			    Out.texCoord0 = In.texCoord0;
 
@@ -197,6 +198,7 @@ Shader "Custom/dx_11_ocean" {
 				// From Unity built in function: _WorldSpaceCameraPos.xyz - mul(_Object2World, v).xyz;
 				Out.viewVec = WorldSpaceViewDir(In.position);
 
+            	// Calculates the grab screen position
 	            #if UNITY_UV_STARTS_AT_TOP
             	float scale = -1.0;
             	#else
@@ -239,13 +241,14 @@ Shader "Custom/dx_11_ocean" {
 	        	float3x3 toWorld 	= float3x3(In.worldTangent, In.worldBinormal, In.worldNormal);
 	            float4 diffuse 		= tex2D(diffMap, diffMap_ST.xy * In.texCoord0 + diffMap_ST.zw);
 	            float3 normal 		= tex2D(normalMap, normalMap_ST.xy * In.texCoord0 + normalMap_ST.zw)*2-1;
-	            float3 refrNormal 	= tex2D(normalMap, 1.5*In.texCoord0)*2-1;
+	            float3 refrNormal 	= tex2D(normalMap, 5*In.texCoord0)*2-1;
 	            float3 bumpWorld 	= normalize(mul(normal,toWorld));
 	            float4 noiseM 		= tex2D(noiseMap, noiseMap_ST.xy * In.texCoord0 + noiseMap_ST.zw);
 	            float4 foamTex 		= tex2D(foamMap, foamMap_ST.xy * In.texCoord0 + foamMap_ST.zw);
 	            float4 foamMaskTex 	= tex2D(foamMask, foamMask_ST.xy * In.texCoord0 + foamMask_ST.zw);
 
 	            ////////// Refraction testing /////////////
+	            float4 depthPos = In.scrPos;
             	float distortion = 500.0;
             	float3 vRefrBump = normalize(normal).xyz * float3(0.075, 0.075, 1.0);
             	float3 refracted = refrNormal * abs(refrNormal);
@@ -254,6 +257,7 @@ Shader "Custom/dx_11_ocean" {
             	projA.xy = refracted.xy * distortion + In.uvRefr.xy;
             	
             	float4 underWaterRefr = tex2Dproj( _GrabTexture, projA);
+            	//return underWaterRefr;
 	            
 	            // TODO: Experiment with cos & sin to get rolling scroll
 	            for(int i=0; i<5; i++)
@@ -281,8 +285,6 @@ Shader "Custom/dx_11_ocean" {
 
 				// Lighting & Color
 				float4 color = waterColorA;
-				color *= underWaterRefr;
-				return color;
 				color.xyz *= _LightColor0; // _LightColor0 comes premultiplied with intensity
 				float diffLight = saturate(dot(bumpWorld, light0Dir));
 				//color *= diffLight;
@@ -298,13 +300,17 @@ Shader "Custom/dx_11_ocean" {
 				float fm 		= clamp(pow(foamTex, 7),0,1);
 				resultColor 	= saturate(lerp(resultColor, foamTex*_FoamStrength, fm) + specular);
 				resultColor.a 	*= waterDepthFactor;
+				//resultColor = lerp(underWaterRefr, resultColor, 0.8);
+				//return resultColor;
+				//lerp (rtRefractions, baseColor, baseColor.a)
 
 				foamTex.a *= foamMaskTex*_ShoreFoamOpacity;
 				foamTex*=_ShoreFoamStrength;
 
 				waterColorB.a *= depthFadeFactor;
 				float4 water = lerp(waterColorB, resultColor, pow(waterDepthFactor, 1.0/_DepthColorSwitch)); // Switching between surface & depth colors
-				water = lerp(foamTex, water, pow(waterDepthFactor, foamFadeFactor));
+				water = lerp(foamTex, water, foamFadeFactor);
+				water = lerp(underWaterRefr, water, 0.8);
 				return water;
 	        }
 			ENDCG
