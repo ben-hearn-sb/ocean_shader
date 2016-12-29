@@ -25,11 +25,11 @@ Shader "Custom/dx_11_ocean" {
 		fresPower 		("Fresnel Power", 	float) 			= 5.0
 		
 		// Texture maps
-		diffMap 		("Diffuse Map", 2D) 		= "white" {}
+		//diffMap 		("Diffuse Map", 2D) 		= "white" {}
 		normalMap		("Normal Map", 	2D) 		= "bump" {}
 		foamMap			("Foam Map", 	2D) 		= "white" {}
 		foamMask		("Foam Mask", 	2D) 		= "white" {}
-		noiseMap		("Noise Map", 	2D) 		= "white" {}
+		//noiseMap		("Noise Map", 	2D) 		= "white" {}
 		cubeMap			("Cube Map", 	CUBE) 		= "" {}
 
 		_FoamStrength ("Foam Strength", Range (0, 10)) = 1
@@ -44,14 +44,14 @@ Shader "Custom/dx_11_ocean" {
 		//diffuseStrength ("Diffuse Strength", Range (0, 1)) = 1.0
 	}
 	SubShader {
-		Tags { "RenderType" = "Opaque" "Queue" = "Transparent" "IgnoreProjector"="True"}	
+		Tags { "RenderType" = "Transparent" "Queue" = "Transparent" "IgnoreProjector"="True"}	
 		//Blend SrcAlpha OneMinusSrcAlpha
 
 		// Pass that renders the scene geometry into a texture
         GrabPass 
         {
-            Name "BASE"
-            Tags { "LightMode" = "Always" }
+        	"_RefractPassTex"
+            Tags { "LightMode" = "VertexLit" }
         }
 		Pass{
 			Blend SrcAlpha OneMinusSrcAlpha 
@@ -72,12 +72,12 @@ Shader "Custom/dx_11_ocean" {
 			uniform sampler2D normalMap;
 			uniform sampler2D foamMap;
 			uniform sampler2D foamMask;
-			uniform sampler2D noiseMap;
+			//uniform sampler2D noiseMap;
 			uniform samplerCUBE cubeMap;
 
 			// Grab pass texture outputs
-			sampler2D _GrabTexture;
-			float4 _GrabTexture_TexelSize;
+			sampler2D _RefractPassTex;
+			float4 _RefractPassTex_TexelSize;
 
 			uniform float4 waterColorA;
 			uniform float4 waterColorB;
@@ -107,7 +107,7 @@ Shader "Custom/dx_11_ocean" {
 			uniform float4 normalMap_ST;
 			uniform float4 foamMap_ST;
 			uniform float4 foamMask_ST;
-			uniform float4 noiseMap_ST;
+			//uniform float4 noiseMap_ST;
 
 			// Static for the time being... Need to make them a bit more dynamic
 			static float mulArray[3] 	= {0.561, 1.793, 0.697};
@@ -239,25 +239,14 @@ Shader "Custom/dx_11_ocean" {
 
 				// Textures
 	        	float3x3 toWorld 	= float3x3(In.worldTangent, In.worldBinormal, In.worldNormal);
-	            float4 diffuse 		= tex2D(diffMap, diffMap_ST.xy * In.texCoord0 + diffMap_ST.zw);
+	            //float4 diffuse 		= tex2D(diffMap, diffMap_ST.xy * In.texCoord0 + diffMap_ST.zw);
 	            float3 normal 		= tex2D(normalMap, normalMap_ST.xy * In.texCoord0 + normalMap_ST.zw)*2-1;
-	            float3 refrNormal 	= tex2D(normalMap, 5*In.texCoord0)*2-1;
+	            float3 refrNormal 	= tex2D(normalMap, 1.5*In.texCoord0)*2-1;
 	            float3 bumpWorld 	= normalize(mul(normal,toWorld));
-	            float4 noiseM 		= tex2D(noiseMap, noiseMap_ST.xy * In.texCoord0 + noiseMap_ST.zw);
+	            //float4 noiseM 		= tex2D(noiseMap, noiseMap_ST.xy * In.texCoord0 + noiseMap_ST.zw);
 	            float4 foamTex 		= tex2D(foamMap, foamMap_ST.xy * In.texCoord0 + foamMap_ST.zw);
 	            float4 foamMaskTex 	= tex2D(foamMask, foamMask_ST.xy * In.texCoord0 + foamMask_ST.zw);
 
-	            ////////// Refraction testing /////////////
-	            float4 depthPos = In.scrPos;
-            	float distortion = 500.0;
-            	float3 vRefrBump = normalize(normal).xyz * float3(0.075, 0.075, 1.0);
-            	float3 refracted = refrNormal * abs(refrNormal);
-	            float4 projA = In.uvRefr;
-            	refracted.xy *= _GrabTexture_TexelSize.xy;
-            	projA.xy = refracted.xy * distortion + In.uvRefr.xy;
-            	
-            	float4 underWaterRefr = tex2Dproj( _GrabTexture, projA);
-            	//return underWaterRefr;
 	            
 	            // TODO: Experiment with cos & sin to get rolling scroll
 	            for(int i=0; i<5; i++)
@@ -268,6 +257,21 @@ Shader "Custom/dx_11_ocean" {
 		           	float2 zwTile = foamMask_ST.zw*texOffset[i];
 		           	foamMaskTex += tex2D(foamMask, xyTile * (In.texCoord0+offset)*2-1 + zwTile);
 				}
+
+	           	////////// Refraction testing /////////////
+	            //float4 depthPos = In.scrPos;
+            	float distortion = 100.0; // warping just enough to not look blurry
+            	//float3 vRefrBump = normalize(normal).xyz * float3(0.075, 0.075, 1.0);
+            	float3 refracted = refrNormal * abs(refrNormal);
+	            float4 projA = In.uvRefr;
+            	refracted.xy *= _RefractPassTex_TexelSize.xy*5;
+            	projA.xy = refracted.xy * distortion + In.uvRefr.xy;
+            	
+            	float4 red = float4(255, 0, 0, 1);
+            	float4 underWaterRefr = tex2Dproj( _RefractPassTex, projA);
+            	//underWaterRefr += red;
+            	//underWaterRefr.a = 10;
+            	//return underWaterRefr;
 
             	// Reflection Stuff
             	float3 V = In.viewVec;
@@ -300,17 +304,22 @@ Shader "Custom/dx_11_ocean" {
 				float fm 		= clamp(pow(foamTex, 7),0,1);
 				resultColor 	= saturate(lerp(resultColor, foamTex*_FoamStrength, fm) + specular);
 				resultColor.a 	*= waterDepthFactor;
-				//resultColor = lerp(underWaterRefr, resultColor, 0.8);
-				//return resultColor;
-				//lerp (rtRefractions, baseColor, baseColor.a)
+				//resultColor = lerp(resultColor, underWaterRefr, pow(intensityFactor, resultColor));
 
 				foamTex.a *= foamMaskTex*_ShoreFoamOpacity;
 				foamTex*=_ShoreFoamStrength;
 
 				waterColorB.a *= depthFadeFactor;
+				//TEMP COMMENT
 				float4 water = lerp(waterColorB, resultColor, pow(waterDepthFactor, 1.0/_DepthColorSwitch)); // Switching between surface & depth colors
 				water = lerp(foamTex, water, foamFadeFactor);
-				water = lerp(underWaterRefr, water, 0.8);
+
+				float4 blendW = water;
+				float4 refrWater = lerp(underWaterRefr, water, blendW);
+				//refrWater.a *= waterDepthFactor;
+				//return refrWater;
+				//water = lerp(refrWater, water, pow(waterDepthFactor, 5));
+				//water = lerp(refrWater, water, pow(waterDepthFactor, 1.0/_DepthColorSwitch));
 				return water;
 	        }
 			ENDCG
