@@ -282,20 +282,16 @@ Shader "Custom/dx_11_ocean" {
             	refracted.xy *= _RefractPassTex_TexelSize.xy*5;
             	projA.xy = refracted.xy * distortion + In.uvRefr.xy;
             	float4 underWaterRefr = tex2Dproj( _RefractPassTex, projA);
-            	//underWaterRefr.a /= depthFadeFactor;
-            	//return underWaterRefr;
-
-				//waterDepthFactor += underWaterRefr.x/5;
-				//waterDepthFactor = 	pow(waterDepthFactor, 	underWaterRefr.x);
-				//depthFadeFactor = 	pow(depthFadeFactor, 	underWaterRefr.x);
-				//foamFadeFactor = 	pow(foamFadeFactor, 	underWaterRefr.x);
+            	underWaterRefr.a -= pow(waterDepthFactor, underWaterRefr.a);
+            	//underWaterRefr = normalize(underWaterRefr);
+            	return underWaterRefr;
 
             	// Reflection Stuff
             	float3 V = In.viewVec;
-				float3 R = reflect(V, bumpWorld);
-				float3 refraction = refract(V, bumpWorld, 1.3333);
-			    float4 reflectedColor = texCUBE(cubeMap, -R);
-    			float4 refractedColor = texCUBE(cubeMap, -refraction);
+				float3 R = reflect(V,refracted); // Using refracted instead of bumpworld is much softer
+				float3 refraction = refract(V, underWaterRefr, 1.3333);
+			    float4 reflectedColor = texCUBE(cubeMap, R);
+    			float4 refractedColor = texCUBE(cubeMap, -R);
     			// TODO: Try a different fresnel calculation???
     			float reflectionCoefficient = fresBias + fresScale * pow(1.0 - dot(normalize(V), In.worldNormal), fresPower);
 
@@ -308,20 +304,22 @@ Shader "Custom/dx_11_ocean" {
 				// Lighting & Color
 				float4 color = deepColor;
 				color.xyz *= _LightColor0; // _LightColor0 comes premultiplied with intensity
-				float diffLight = saturate(dot(bumpWorld, light0Dir));
+				//float diffLight = saturate(dot(bumpWorld, light0Dir));
 				//color *= diffLight;
 				//color += (diffuse*diffuseStrength);
 
 				// Initial color calculation
-				float3 cFinal = lerp(reflectedColor, underWaterRefr, reflectionCoefficient);
+				float3 cFinal = lerp(reflectedColor, underWaterRefr+color, reflectionCoefficient);
 				float4 final = float4(cFinal, 1);
+				//return final;
 				float4 resultColor = lerp(color, final, reflectionCoefficient);
 
 				// Surface Color + master foam surface
-				
 				float fm 		= clamp(pow(foamTex, 7),0,1);
 				resultColor 	= saturate(lerp(resultColor, foamTex*_FoamStrength, fm) + specular);
 				resultColor.a 	*= waterDepthFactor;
+				//return resultColor+underWaterRefr;
+				//return lerp(resultColor, underWaterRefr, -waterDepthFactor);
 				//resultColor 	+= underWaterRefr;
 
 				// changing alpha after master foam is added to sea
@@ -334,11 +332,12 @@ Shader "Custom/dx_11_ocean" {
 				water = lerp(foamTex, water, foamFadeFactor); // FIX THIS. FOAM FADE FACTOR IS NOT ENOUGH. IT GETS RID OF THE NICE FADE AT THE SHORLINE
 
 				//float4 blendW = water;
-				float4 refrWater = lerp(water, underWaterRefr, reflectionCoefficient); // THIS LINE IS VERY VERY CLOSE NEED TO GET THE VALUES & SLIDERS CORRECT
+				float4 refrWater = lerp(water, underWaterRefr,underWaterRefr.a); // THIS LINE IS VERY VERY CLOSE NEED TO GET THE VALUES & SLIDERS CORRECT
 				//refrWater.a *= waterDepthFactor;
 				//return refrWater;
 				//water = lerp(refrWater, water, pow(waterDepthFactor, 5));
 				//water = lerp(refrWater, water, pow(waterDepthFactor, 1.0/_DepthColorSwitch));
+				//water.xyz *= underWaterRefr.x;
 				return water;
 	        }
 			ENDCG
