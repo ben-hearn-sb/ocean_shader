@@ -264,14 +264,6 @@ Shader "Custom/dx_11_ocean" {
 		           	foamMaskTex += tex2D(foamMask, xyTile * (In.texCoord0+offset)*2-1 + zwTile);
 				}
 
-            	// Depth calculations
-            	//In.scrPos.xy += refracted.xy * distortion;
-				float sceneZ = LinearEyeDepth (tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(In.scrPos)).r);
-				float objectZ = In.scrPos.z;
-				//float intensityFactor = 1 - saturate((sceneZ - objectZ)/_WaterDepth);
-				float waterDepthFactor = saturate((sceneZ - objectZ)/_WaterDepth);
-				float depthFadeFactor = 1 - saturate(_DepthFade - (sceneZ - objectZ));
-				float foamFadeFactor = 1 - saturate(_FoamFade - (sceneZ - objectZ));
 
 	           	////////// Refraction testing /////////////
 	           	float3 refrNormal 	= tex2D(normalMap, 1.5*In.texCoord0)*2-1;
@@ -282,9 +274,24 @@ Shader "Custom/dx_11_ocean" {
             	refracted.xy *= _RefractPassTex_TexelSize.xy*5;
             	projA.xy = refracted.xy * distortion + In.uvRefr.xy;
             	float4 underWaterRefr = tex2Dproj( _RefractPassTex, projA);
-            	underWaterRefr.a -= pow(waterDepthFactor, underWaterRefr.a);
+            	//underWaterRefr.a -= pow(waterDepthFactor, underWaterRefr.a);
             	//underWaterRefr = normalize(underWaterRefr);
-            	return underWaterRefr;
+            	//deepColor.a *= pow(waterDepthFactor, underWaterRefr.a);
+            	//underWaterRefr = underWaterRefr * deepColor;
+            	//waterDepthFactor *= underWaterRefr;
+            	//return underWaterRefr;
+
+            	// Depth calculations
+            	//In.scrPos.xy += refracted.xy * distortion;
+            	float4 depthTex = tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(projA));
+				//float sceneZ = LinearEyeDepth (tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(In.scrPos)).r);
+				float sceneZ = LinearEyeDepth (depthTex.r);
+				//float objectZ = In.scrPos.z;
+				float objectZ = projA.z;
+				//float intensityFactor = 1 - saturate((sceneZ - objectZ)/_WaterDepth);
+				float waterDepthFactor = saturate((sceneZ - objectZ)/_WaterDepth);
+				float depthFadeFactor = 1 - saturate(_DepthFade - (sceneZ - objectZ));
+				float foamFadeFactor = 1 - saturate(_FoamFade - (sceneZ - objectZ));
 
             	// Reflection Stuff
             	float3 V = In.viewVec;
@@ -329,16 +336,17 @@ Shader "Custom/dx_11_ocean" {
 				// FIX THIS: WATER COLOR B IS BLENDING IN WITH THE SHORLINE FOAM. WE DO NOT WANT THIS
 				shallowColor.a *= depthFadeFactor;
 				float4 water = lerp(shallowColor, resultColor, pow(waterDepthFactor, 1.0/_DepthColorSwitch)); // Switching between surface & depth colors
+				//float foamFade = pow(waterDepthFactor, foamFadeFactor);
 				water = lerp(foamTex, water, foamFadeFactor); // FIX THIS. FOAM FADE FACTOR IS NOT ENOUGH. IT GETS RID OF THE NICE FADE AT THE SHORLINE
 
 				//float4 blendW = water;
-				float4 refrWater = lerp(water, underWaterRefr,underWaterRefr.a); // THIS LINE IS VERY VERY CLOSE NEED TO GET THE VALUES & SLIDERS CORRECT
+				float4 refrWater = lerp(underWaterRefr,water, waterDepthFactor); // THIS LINE IS VERY VERY CLOSE NEED TO GET THE VALUES & SLIDERS CORRECT
 				//refrWater.a *= waterDepthFactor;
-				//return refrWater;
+				return refrWater;
 				//water = lerp(refrWater, water, pow(waterDepthFactor, 5));
 				//water = lerp(refrWater, water, pow(waterDepthFactor, 1.0/_DepthColorSwitch));
 				//water.xyz *= underWaterRefr.x;
-				return water;
+				return water*underWaterRefr;
 	        }
 			ENDCG
 		}
