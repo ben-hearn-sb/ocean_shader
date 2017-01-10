@@ -3,14 +3,17 @@
 #define PI (3.14159265)
 #define PHASE (2*PI)
 
-float3 gerstnerWave(float3 position, float multiplier, float2 direction, float amplitude, float waveLength, float crestFactor, float speed, float globalTimer, float outType)
+float3 gerstnerWave(float3 position, float multiplier, float2 direction, float amplitude, float waveLength, float crestFactor, float speed, float globalTimer, float outType, float wave, float inAmp)
 {
 	// Returns either position, binormal, tangent or normal
-	float amp = amplitude*0.025;
-	amp *= multiplier;
+	float amp = inAmp;
+	amp *= 0.25*amplitude;
+	//float amp = amplitude*0.025;
+	//amp *= multiplier;
 	
-	float WL = waveLength;
-	WL *= multiplier;
+	//float WL = waveLength;
+	float WL = wave*waveLength;
+	WL *= multiplier*0.5;
 
 	float2 D = direction;
 
@@ -42,4 +45,9 @@ float3 gerstnerWave(float3 position, float multiplier, float2 direction, float a
 	if(outType == 3)
 		float3 N = float3(dotX*WA*C, Q*WA*S, dotY*WA*C);
 		return N;
+}
+
+float4 color_to_float (float4 col)
+{
+    return float4(col.r/255.0, col.g/255.0, col.b/255.0, col.a/255.0);
 }
