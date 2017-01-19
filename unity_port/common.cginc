@@ -51,3 +51,20 @@ float4 color_to_float (float4 col)
 {
     return float4(col.r/255.0, col.g/255.0, col.b/255.0, col.a/255.0);
 }
+
+float fresnelCalculation(float3 viewVec, float3 worldNorm)
+{
+	float fresnelBias 	= 0;
+	float fresnelScale 	= 1;
+	float fresnelPower 	= 5;
+	return fresnelBias + fresnelScale * pow(1.0 - dot(normalize(viewVec), worldNorm), fresnelPower);
+}
+
+float4 generateHeightMask(float4 posWorld)
+{
+	// Height Map
+	float _HeightMin = 0;
+	float _HeightMax = 2;
+	float h = (_HeightMax-posWorld.y) / (_HeightMax-_HeightMin);
+	return lerp(float4(1,1,1,1), float4(0,0,0,1), pow(h, posWorld.y));
+}
