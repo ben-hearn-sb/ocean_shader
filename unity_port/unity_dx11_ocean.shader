@@ -18,15 +18,11 @@ Shader "Custom/dx_11_ocean" {
 		speed 			("Speed", 			range(0, 5)) 	= 1.0
 		dirX 			("Direction X", 	range(-1, 1)) 	= 1.0
 		dirY 			("Direction Y", 	range(-1, 1)) 	= 0.0
-
-		// Fresnel stuff
-		fresBias 		("Fresnel Bias", 	float) 			= 0.0
-		fresScale 		("Fresnel Scale", 	float) 			= 1.0
-		fresPower 		("Fresnel Power", 	float) 			= 5.0
 		
 		// Texture maps
 		//diffMap 		("Diffuse Map", 2D) 		= "white" {}
 		normalMap		("Normal Map", 	2D) 		= "bump" {}
+		normalMap2		("Normal Map 2", 	2D) 		= "bump" {}
 		refractionMap		("Refract Map", 2D) 		= "bump" {}
 		foamMap			("Foam Map", 	2D) 		= "white" {}
 		foamMask		("Foam Mask", 	2D) 		= "white" {}
@@ -48,7 +44,7 @@ Shader "Custom/dx_11_ocean" {
 		//[IntRange] _Weather ("Weather", Range (0, 1)) = 0
 		//[IntRange] _Environ ("Ocean Env", Range (0, 1)) = 0
 		////[KeywordEnum(Calm, Stormy)] 		_Weather("Weather", 	Float) = 0
-		//[KeywordEnum(Carribean, North Sea)] _EnumEnviron("Ocean Env", 	Float) = 0
+		[KeywordEnum(Carribean, North Sea)] _Environ("Ocean Env", 	int) = 0
 	}
 	SubShader {
 		Tags { "RenderType" = "Transparent" "Queue" = "Transparent" "IgnoreProjector"="True"}	
@@ -72,11 +68,13 @@ Shader "Custom/dx_11_ocean" {
 			#pragma fragment frag
 			#pragma fragmentoption ARB_precision_hint_fastest
 			#pragma multi_compile
+			#pragma debug
 			#include "UnityCG.cginc"
 			#include "common.cginc"
 
 			uniform sampler2D diffMap;
 			uniform sampler2D normalMap;
+			uniform sampler2D normalMap2;
 			uniform sampler2D foamMap;
 			uniform sampler2D foamMask;
 			uniform sampler2D refractionMap;
@@ -93,9 +91,6 @@ Shader "Custom/dx_11_ocean" {
 			uniform float waveLength;
 			uniform float speed=2.1;
 			uniform float crestFactor;
-			uniform float fresBias;
-			uniform float fresScale;
-			uniform float fresPower;
 			uniform float dirX=1.0;
 			uniform float dirY=0.0;
 
@@ -114,9 +109,11 @@ Shader "Custom/dx_11_ocean" {
 			float _TranslucentStrength;
 			float _DepthColorSwitch;
 			float diffuseStrength;
+			int _Environ;
 
 			uniform float4 diffMap_ST;
 			uniform float4 normalMap_ST;
+			uniform float4 normalMap2_ST;
 			uniform float4 foamMap_ST;
 			uniform float4 foamMask_ST;
 			uniform float4 refractionMap_ST;
@@ -139,6 +136,7 @@ Shader "Custom/dx_11_ocean" {
 				float2 texCoord0		: TEXCOORD0;
 				float4 tangent			: TANGENT;
 				float3 normal			: NORMAL;
+				float4 color 			: COLOR; // Vertex color param. Must be in struct, must be called color
 			}; 
 
 			// output to pixel shader 
@@ -153,6 +151,8 @@ Shader "Custom/dx_11_ocean" {
 				float4 posWorld			: TEXCOORD5;
 				float4 scrPos			: TEXCOORD6;
 				float4 uvRefr			: TEXCOORD7;
+				float2 texCoord1		: TEXCOORD8;
+				float4 vColor : TEXCOORD9;
 			};
 
 			vertex2frag vert(app2vertex In)
@@ -167,6 +167,12 @@ Shader "Custom/dx_11_ocean" {
 				float3 sumN = float3(0,0,0);
 				float2 dirsXY = float2(dirX, dirY);
 				//sumW = gerstnerWave(In.position, 	1, dirsXY, amplitude, waveLength, crestFactor, speed, _Time.y, 0);
+				float4 vColor = In.color;
+				Out.vColor = vColor;
+				float4 red = float4(1,0,0,1);
+				amplitude *= 1 - vColor.x; // 
+
+
 				for(int i=0; i < 3; i++)
 				{
 					//float2 dirsVal = dirsArray[i]*dirsXY;
@@ -204,15 +210,11 @@ Shader "Custom/dx_11_ocean" {
 				Out.position = mul(UNITY_MATRIX_MVP, In.position);
 				Out.scrPos = ComputeScreenPos(Out.position);
 				//Out.scrPos.y = 1 - Out.scrPos.y;
+
 			    Out.texCoord0 = In.texCoord0;
-
-			    float sumTimer = 0.0;
-			    for(int i=0; i < 3; i++)
-			    {
-			    	sumTimer += (_Time.y);
-			    }
-
-			    Out.texCoord0.x += (_Time.y*timerScale1*0.05);
+			    Out.texCoord1 = In.texCoord0;
+			    Out.texCoord0.y += _Time.y*timerScale1*0.05;
+			    Out.texCoord1.yx += _Time.y*timerScale1*0.05;
 
 				// From Unity built in function: _WorldSpaceCameraPos.xyz - mul(_Object2World, v).xyz;
 				Out.viewVec = WorldSpaceViewDir(In.position);
@@ -233,7 +235,18 @@ Shader "Custom/dx_11_ocean" {
 			//static float2 texOffset[5] 	= {float2(0.65, 1.0), float2(1.43, 0.5), float2(0.25, 1.0), float2(1.75, 0.25), float2(1.25, 1.0)};
 			static float texOffset[5] 	= {1.15, 0.1, 0.25, 0.5, 0.75};
 	        fixed4 frag (vertex2frag In) : SV_Target
-	        {	
+	        {
+    			if (_Environ == 0)
+    			{
+					deepColor 		= color_to_float(float4(0, 22, 88, 255));
+					shallowColor 	= color_to_float(float4(0, 191, 208, 175));
+				}
+				else if (_Environ == 1)
+				{
+					deepColor 		= color_to_float(float4(0, 0, 38, 255));
+					shallowColor 	= color_to_float(float4(74, 116, 57, 175));
+				}
+
 	        	// Lighting
 	            float attenuation;
 	            float3 light0Dir;
@@ -253,19 +266,13 @@ Shader "Custom/dx_11_ocean" {
 				// Textures
 	        	float3x3 toWorld 	= float3x3(In.worldTangent, In.worldBinormal, In.worldNormal);
 	            float4 normal 		= tex2D(normalMap, normalMap_ST.xy * In.texCoord0 + normalMap_ST.zw)*2-1;
+	            float4 normal2 		= tex2D(normalMap2, normalMap2_ST.xy * In.texCoord1 + normalMap2_ST.zw)*2-1;
+	            normal = normal+normal2;
 	            float3 bumpWorld 	= normalize(mul(normal,toWorld));
+
 	            float4 foamTex 		= tex2D(foamMap, foamMap_ST.xy * In.texCoord0 + foamMap_ST.zw);
 	            float4 foamMaskTex 	= tex2D(foamMask, foamMask_ST.xy * In.texCoord0 + foamMask_ST.zw);
 	            float4 refrMap 		= tex2D(refractionMap, refractionMap_ST.xy * In.texCoord0 + refractionMap_ST.zw)*2-1;
-
-	            // TODO: FIX THIS, THE SWITCHING DOES NOT WORK!
-    			/*#if _Environ == 0
-					deepColor 		= color_to_float(float4(38, 91, 193, 255));
-					shallowColor 	= color_to_float(float4(0, 191, 208, 150));
-				#elif _Environ == 1
-					deepColor 		= color_to_float(float4(255, 0, 0, 255));
-					shallowColor 	= color_to_float(float4(255, 0, 0, 255));
-				#endif*/
 	
 	            // Foam scrolling & adding up masking
 	            for(int j=0; j<5; j++)
@@ -279,19 +286,17 @@ Shader "Custom/dx_11_ocean" {
 
 
 	           	////////// Refraction testing /////////////
-            	float distortion = 50.0; // warping just enough to not look blurry
+            	float distortion = 100.0; // warping just enough to not look blurry
             	float3 refracted = refrMap * abs(refrMap);
 	            float4 projA = In.uvRefr;
 	            //return projA;
             	refracted.xy *= _RefractPassTex_TexelSize.xy*5;
             	projA.xy = refracted.xy * distortion + In.uvRefr.xy;
             	float4 underWaterRefr = tex2Dproj( _RefractPassTex, projA);
-            	//return underWaterRefr;
+            	shallowColor += underWaterRefr;
 
             	// Depth calculations
             	float4 depthTex = tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(In.scrPos));
-            	//float4 depthTex = tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(projA));
-				//float sceneZ = LinearEyeDepth (tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(In.scrPos)).r);
 				float sceneZ = LinearEyeDepth (depthTex.r);
 				float objectZ = In.scrPos.z;
 				//float objectZ = projA.z;
@@ -300,21 +305,14 @@ Shader "Custom/dx_11_ocean" {
 				float foamFadeFactor 		= 1 - saturate(_FoamFade - (sceneZ - objectZ));
 				float foamDepthFadeFactor 	= 1 - saturate(_FoamDepthFade - (sceneZ - objectZ));
 
-				// Height Map
-				float _HeightMax = 2;
-				float _HeightMin = 0;
-				float h = (_HeightMax-In.posWorld.y) / (_HeightMax-_HeightMin);
-				float4 red = float4(1, 0, 0, 1);
-				float4 heightMask = lerp(float4(1,1,1,1), float4(0,0,0,1), pow(h, In.posWorld.y));
-				//return heightMask;
+				float4 heightMask = generateHeightMask(In.posWorld);
 
-            	// Reflection Stuff
             	float3 V = In.viewVec;
 				float3 R = reflect(V, bumpWorld*abs(bumpWorld)); //bumpWorld calculation gives nice clear yet watery reflection
 				float3 refraction = refract(V, bumpWorld*abs(bumpWorld), 1.3333);
 			    float4 reflectedColor = texCUBE(cubeMap, -R);
     			float4 refractedColor = texCUBE(cubeMap, refraction);
-    			float reflectionCoefficient = fresBias + fresScale * pow(1.0 - dot(normalize(V), In.worldNormal), fresPower);
+    			float reflectionCoefficient = fresnelCalculation(V, In.worldNormal);
 
     			// Specular stuff
 				float3 reflection = reflect(bumpWorld, -light0Dir);
@@ -326,25 +324,19 @@ Shader "Custom/dx_11_ocean" {
 				float diffLight = attenuation * _LightColor0 * max(0.5, dot(normalize(normal), light0Dir));
 
 				// Initial color calculation
-				float3 cFinal = lerp(reflectedColor, refractedColor, reflectionCoefficient);
-				float4 final = float4(cFinal, 1);
-				final = saturate(final*final);
+				float4 final = lerp(reflectedColor, refractedColor, reflectionCoefficient);
+				final.a = 1;
+				final = final*abs(final);
 				final.a *= waterDepthFactor;
-				//return final;
-				color.a *= 0.5;
 				float4 resultColor = final+color;
-				resultColor.xyz = resultColor.xyz*diffLight;
+				resultColor.xyz *= diffLight;
 				resultColor.a 	*= waterDepthFactor;
 				resultColor += specular;
-				//return resultColor;
 
-				// Surface Color + master foam surface
 				float fm 		= clamp(pow(foamTex, 1),0,1);
 				float4 topFoam = foamTex;
 				topFoam.a *= waterDepthFactor;
-				//foamTex.a *= waterDepthFactor;
 				resultColor = lerp(resultColor, topFoam*_FoamStrength, heightMask);
-				//return resultColor;
 
 				// changing alpha after master foam is added to sea
 				float4 shoreFoamTex = foamTex;
@@ -352,15 +344,13 @@ Shader "Custom/dx_11_ocean" {
 				shoreFoamTex.a *= foamMaskTex*0.25;
 				shoreFoamTex*=_ShoreFoamStrength;
 
-				// FIX THIS: WATER COLOR B IS BLENDING IN WITH THE SHORLINE FOAM. WE DO NOT WANT THIS
 				float depthColorSwitch = 4;
-				shallowColor.a *= depthFadeFactor;
+				//shallowColor.a *= depthFadeFactor;
 				float4 water = lerp(shallowColor, resultColor, pow(waterDepthFactor, 1.0/_DepthColorSwitch)); // Switching between surface & depth colors
-				//float foamFade = pow(waterDepthFactor, foamFadeFactor);
-				water = lerp(shoreFoamTex, water, foamFadeFactor); // FIX THIS. FOAM FADE FACTOR IS NOT ENOUGH. IT GETS RID OF THE NICE FADE AT THE SHORLINE
+				water = lerp(shoreFoamTex, water, foamFadeFactor);
 				return water;
 
-				float4 refrWater = lerp(underWaterRefr, water, waterDepthFactor); // THIS LINE IS VERY VERY CLOSE NEED TO GET THE VALUES & SLIDERS CORRECT
+				float4 refrWater = lerp(underWaterRefr, water, pow(waterDepthFactor, foamFadeFactor)); // THIS LINE IS VERY VERY CLOSE NEED TO GET THE VALUES & SLIDERS CORRECT
 				return refrWater;
 	        }
 			ENDCG
