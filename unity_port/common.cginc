@@ -54,10 +54,20 @@ float4 color_to_float (float4 col)
 
 float fresnelCalculation(float3 viewVec, float3 worldNorm)
 {
-	float fresnelBias 	= 0;
+	float fresnelBias 	= 0.3;
 	float fresnelScale 	= 1;
 	float fresnelPower 	= 5;
 	return fresnelBias + fresnelScale * pow(1.0 - dot(normalize(viewVec), worldNorm), fresnelPower);
+}
+
+float Fresnel(float3 viewVector, float3 worldNormal)
+{
+	float fresnelBias 	= 0;
+	float fresnelScale 	= 1;
+	float fresnelPower 	= 5;
+	float facing =  clamp(1.0-max(dot(-viewVector, worldNormal), 0.0), 0.0,1.0);	
+	float refl2Refr = saturate(fresnelBias+(1.0-fresnelBias) * pow(facing,fresnelPower));	
+	return refl2Refr;	
 }
 
 float4 generateHeightMask(float4 posWorld)

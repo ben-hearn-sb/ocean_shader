@@ -44,7 +44,7 @@ Shader "Custom/dx_11_ocean" {
 		//[IntRange] _Weather ("Weather", Range (0, 1)) = 0
 		//[IntRange] _Environ ("Ocean Env", Range (0, 1)) = 0
 		////[KeywordEnum(Calm, Stormy)] 		_Weather("Weather", 	Float) = 0
-		[KeywordEnum(Carribean, North Sea)] _Environ("Ocean Env", 	int) = 0
+		[KeywordEnum(Carribean, North Sea, User)] _Environ("Ocean Env", 	int) = 0
 	}
 	SubShader {
 		Tags { "RenderType" = "Transparent" "Queue" = "Transparent" "IgnoreProjector"="True"}	
@@ -238,13 +238,13 @@ Shader "Custom/dx_11_ocean" {
 	        {
     			if (_Environ == 0)
     			{
-					deepColor 		= color_to_float(float4(0, 22, 88, 255));
-					shallowColor 	= color_to_float(float4(0, 191, 208, 175));
+					deepColor 		= color_to_float(float4(14, 80, 120, 255));
+					shallowColor 	= color_to_float(float4(0, 180, 208, 175));
 				}
 				else if (_Environ == 1)
 				{
-					deepColor 		= color_to_float(float4(0, 0, 38, 255));
-					shallowColor 	= color_to_float(float4(74, 116, 57, 175));
+					deepColor 		= color_to_float(float4(0, 60, 111, 255));
+					shallowColor 	= color_to_float(float4(60, 50, 0, 175));
 				}
 
 	        	// Lighting
@@ -312,7 +312,6 @@ Shader "Custom/dx_11_ocean" {
 				float3 refraction = refract(V, bumpWorld*abs(bumpWorld), 1.3333);
 			    float4 reflectedColor = texCUBE(cubeMap, -R);
     			float4 refractedColor = texCUBE(cubeMap, refraction);
-    			float reflectionCoefficient = fresnelCalculation(V, In.worldNormal);
 
     			// Specular stuff
 				float3 reflection = reflect(bumpWorld, -light0Dir);
@@ -321,15 +320,17 @@ Shader "Custom/dx_11_ocean" {
 				specular *= specIntensity * _LightColor0;
 
 				float4 color = deepColor;
-				float diffLight = attenuation * _LightColor0 * max(0.5, dot(normalize(normal), light0Dir));
+				float diffLight = attenuation * _LightColor0 * max(0.5, dot(normalize(normal), normalize(light0Dir)));
 
 				// Initial color calculation
-				float4 final = lerp(reflectedColor, refractedColor, reflectionCoefficient);
-				final.a = 1;
-				final = final*abs(final);
+				float reflectionCoefficient = fresnelCalculation(V, In.worldNormal);
+    			//float reflectionCoefficient = Fresnel(V, In.worldNormal);
+				float4 final = lerp(color, float4(reflectedColor.xyz, 1), reflectionCoefficient);
+				final *= abs(final);
+				//return final;
 				final.a *= waterDepthFactor;
 				float4 resultColor = final+color;
-				resultColor.xyz *= diffLight;
+				//resultColor.xyz *= diffLight;
 				resultColor.a 	*= waterDepthFactor;
 				resultColor += specular;
 
@@ -348,6 +349,7 @@ Shader "Custom/dx_11_ocean" {
 				//shallowColor.a *= depthFadeFactor;
 				float4 water = lerp(shallowColor, resultColor, pow(waterDepthFactor, 1.0/_DepthColorSwitch)); // Switching between surface & depth colors
 				water = lerp(shoreFoamTex, water, foamFadeFactor);
+				water.xyz *= diffLight;
 				return water;
 
 				float4 refrWater = lerp(underWaterRefr, water, pow(waterDepthFactor, foamFadeFactor)); // THIS LINE IS VERY VERY CLOSE NEED TO GET THE VALUES & SLIDERS CORRECT
