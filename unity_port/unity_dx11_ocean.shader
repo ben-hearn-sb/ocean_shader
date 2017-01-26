@@ -13,7 +13,7 @@ Shader "Custom/dx_11_ocean" {
 
 		// Wave stuff
 		amplitude 		("Amplitude", 		range(0, 10)) 	= 0.4
-		waveLength 		("Wavelength", 		range(0, 10)) 	= 2.5
+		waveLength 		("Wavelength", 		range(0, 50)) 	= 2.5
 		crestFactor 	("Crest Factor", 	range(0, 10)) 	= 1.0
 		speed 			("Speed", 			range(0, 5)) 	= 1.0
 		dirX 			("Direction X", 	range(-1, 1)) 	= 1.0
@@ -22,14 +22,14 @@ Shader "Custom/dx_11_ocean" {
 		// Texture maps
 		//diffMap 		("Diffuse Map", 2D) 		= "white" {}
 		normalMap		("Normal Map", 	2D) 		= "bump" {}
-		normalMap2		("Normal Map 2", 	2D) 		= "bump" {}
-		refractionMap		("Refract Map", 2D) 		= "bump" {}
+		normalMap2		("Normal Map 2", 	2D) 	= "bump" {}
+		refractionMap	("Refract Map", 2D) 		= "bump" {}
 		foamMap			("Foam Map", 	2D) 		= "white" {}
 		foamMask		("Foam Mask", 	2D) 		= "white" {}
 		//noiseMap		("Noise Map", 	2D) 		= "white" {}
 		cubeMap			("Cube Map", 	CUBE) 		= "" {}
 
-		_FoamStrength ("Foam Strength", Range (0, 10)) = 1
+		_FoamStrength ("Foam Strength", Range (0, 20)) = 1
 		_ShoreFoamStrength ("Shore Foam Strength", Range (0, 10)) = 1
 		//_ShoreFoamOpacity ("Shore Foam Opacity", Range (0, 10)) = 1
 		//_ShoreFoamTransparency ("Shore Foam Transparency", Range (0, 10)) = 1
@@ -267,29 +267,29 @@ Shader "Custom/dx_11_ocean" {
 	        	float3x3 toWorld 	= float3x3(In.worldTangent, In.worldBinormal, In.worldNormal);
 	            float4 normal 		= tex2D(normalMap, normalMap_ST.xy * In.texCoord0 + normalMap_ST.zw)*2-1;
 	            float4 normal2 		= tex2D(normalMap2, normalMap2_ST.xy * In.texCoord1 + normalMap2_ST.zw)*2-1;
-	            normal = normal+normal2;
+	            normal = lerp(normal, normal2, 0.5);
 	            float3 bumpWorld 	= normalize(mul(normal,toWorld));
+	            float3 surfaceBump 	= normalize(mul(normal,toWorld));
+	            surfaceBump.xyz *= float3(5.0, 5.0, 1.0);
 
 	            float4 foamTex 		= tex2D(foamMap, foamMap_ST.xy * In.texCoord0 + foamMap_ST.zw);
 	            float4 foamMaskTex 	= tex2D(foamMask, foamMask_ST.xy * In.texCoord0 + foamMask_ST.zw);
 	            float4 refrMap 		= tex2D(refractionMap, refractionMap_ST.xy * In.texCoord0 + refractionMap_ST.zw)*2-1;
 	
 	            // Foam scrolling & adding up masking
-	            for(int j=0; j<5; j++)
+	            /*for(int j=0; j<5; j++)
 				{
 		           	float offset = sin(texOffset[j]*dirX);
 		           	offset *= cos(texOffset[j]*dirX);
 		           	float2 xyTile = foamMask_ST.xy*texOffset[j];
 		           	float2 zwTile = foamMask_ST.zw*texOffset[j];
 		           	foamMaskTex += tex2D(foamMask, xyTile * (In.texCoord0+offset)*2-1 + zwTile);
-				}
-
+				}*/
 
 	           	////////// Refraction testing /////////////
             	float distortion = 100.0; // warping just enough to not look blurry
             	float3 refracted = refrMap * abs(refrMap);
 	            float4 projA = In.uvRefr;
-	            //return projA;
             	refracted.xy *= _RefractPassTex_TexelSize.xy*5;
             	projA.xy = refracted.xy * distortion + In.uvRefr.xy;
             	float4 underWaterRefr = tex2Dproj( _RefractPassTex, projA);
@@ -299,13 +299,10 @@ Shader "Custom/dx_11_ocean" {
             	float4 depthTex = tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(In.scrPos));
 				float sceneZ = LinearEyeDepth (depthTex.r);
 				float objectZ = In.scrPos.z;
-				//float objectZ = projA.z;
 				float waterDepthFactor 		= saturate((sceneZ - projA.z)/_WaterDepth);
 				float depthFadeFactor 		= 1 - saturate(_DepthFade - (sceneZ - objectZ));
 				float foamFadeFactor 		= 1 - saturate(_FoamFade - (sceneZ - objectZ));
 				float foamDepthFadeFactor 	= 1 - saturate(_FoamDepthFade - (sceneZ - objectZ));
-
-				float4 heightMask = generateHeightMask(In.posWorld);
 
             	float3 V = In.viewVec;
 				float3 R = reflect(V, bumpWorld*abs(bumpWorld)); //bumpWorld calculation gives nice clear yet watery reflection
@@ -320,40 +317,44 @@ Shader "Custom/dx_11_ocean" {
 				specular *= specIntensity * _LightColor0;
 
 				float4 color = deepColor;
-				float diffLight = attenuation * _LightColor0 * max(0.5, dot(normalize(normal), normalize(light0Dir)));
+				float diffLight = attenuation * _LightColor0 * max(0.5, dot(normalize(surfaceBump), normalize(light0Dir)));
+				//float diffLight = attenuation * _LightColor0 * max(0.5, dot(normalize(bumpWorld), normalize(light0Dir)));
+
 
 				// Initial color calculation
 				float reflectionCoefficient = fresnelCalculation(V, In.worldNormal);
-    			//float reflectionCoefficient = Fresnel(V, In.worldNormal);
 				float4 final = lerp(color, float4(reflectedColor.xyz, 1), reflectionCoefficient);
 				final *= abs(final);
 				//return final;
 				final.a *= waterDepthFactor;
 				float4 resultColor = final+color;
-				//resultColor.xyz *= diffLight;
 				resultColor.a 	*= waterDepthFactor;
 				resultColor += specular;
 
-				float fm 		= clamp(pow(foamTex, 1),0,1);
-				float4 topFoam = foamTex;
-				topFoam.a *= waterDepthFactor;
-				resultColor = lerp(resultColor, topFoam*_FoamStrength, heightMask);
+				float fm 		= clamp(pow(foamTex, 2),0,1);
+				float4 topFoam = foamTex*_FoamStrength;
+				topFoam *= fm;
+				//topFoam.xyz *= _FoamStrength;
+				//topFoam.a *= foamMaskTex;
+				//topFoam.a *= foamMaskTex;
+				//topFoam.a *= waterDepthFactor;
+
+				float4 heightMask 		= generateHeightMask(In.posWorld, -0.5, 2);
+				float waveHeightMask 	= generateHeightMask(In.posWorld, -2, 2);
+				//resultColor.a *= waveHeightMask;
+				resultColor = lerp(lerp(resultColor, shallowColor, waveHeightMask), min(4,topFoam), heightMask);
 
 				// changing alpha after master foam is added to sea
 				float4 shoreFoamTex = foamTex;
 				shoreFoamTex.a *= foamDepthFadeFactor;
-				shoreFoamTex.a *= foamMaskTex*0.25;
+				//shoreFoamTex.a *= foamMaskTex*0.25;
 				shoreFoamTex*=_ShoreFoamStrength;
 
 				float depthColorSwitch = 4;
-				//shallowColor.a *= depthFadeFactor;
 				float4 water = lerp(shallowColor, resultColor, pow(waterDepthFactor, 1.0/_DepthColorSwitch)); // Switching between surface & depth colors
 				water = lerp(shoreFoamTex, water, foamFadeFactor);
 				water.xyz *= diffLight;
 				return water;
-
-				float4 refrWater = lerp(underWaterRefr, water, pow(waterDepthFactor, foamFadeFactor)); // THIS LINE IS VERY VERY CLOSE NEED TO GET THE VALUES & SLIDERS CORRECT
-				return refrWater;
 	        }
 			ENDCG
 		}
