@@ -52,12 +52,9 @@ float4 color_to_float (float4 col)
     return float4(col.r/255.0, col.g/255.0, col.b/255.0, col.a/255.0);
 }
 
-float fresnelCalculation(float3 viewVec, float3 worldNorm)
+float fresnelCalculation(float3 viewVec, float3 worldNorm, float bias, float scale, float power)
 {
-	float fresnelBias 	= 0.3;
-	float fresnelScale 	= 1;
-	float fresnelPower 	= 5;
-	return fresnelBias + fresnelScale * pow(1.0 - dot(normalize(viewVec), worldNorm), fresnelPower);
+	return bias + scale * pow(1.0 - dot(normalize(viewVec), worldNorm), power);
 }
 
 float Fresnel(float3 viewVector, float3 worldNormal)
@@ -70,11 +67,21 @@ float Fresnel(float3 viewVector, float3 worldNormal)
 	return refl2Refr;	
 }
 
-float4 generateHeightMask(float4 posWorld)
+float4 generateHeightMask(float4 posWorld, float _HeightMin, float _HeightMax)
 {
 	// Height Map
-	float _HeightMin = 0;
-	float _HeightMax = 2;
 	float h = (_HeightMax-posWorld.y) / (_HeightMax-_HeightMin);
 	return lerp(float4(1,1,1,1), float4(0,0,0,1), pow(h, posWorld.y));
+}
+
+float4 desaturateColor(float4 inputColor, float contrast, float alphaMultiply)
+{
+	inputColor.rgb = ((inputColor.rgb - 0.5f) * max(contrast, 0)) + 0.5f;
+	inputColor.rgb *= inputColor.a*alphaMultiply;
+	return inputColor;
+}
+
+float4 sharpenColor(float4 inputColor)
+{
+	return inputColor*abs(inputColor);
 }

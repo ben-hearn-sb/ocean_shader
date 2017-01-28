@@ -155,6 +155,11 @@ Shader "Custom/dx_11_ocean" {
 				float4 vColor : TEXCOORD9;
 			};
 
+			struct extraTexCoords
+			{
+				float2 foamTexCoords : TEXCOORD0;
+			};
+
 			vertex2frag vert(app2vertex In)
 			{
 				amplitude *= 0.25;
@@ -308,7 +313,7 @@ Shader "Custom/dx_11_ocean" {
 				float3 R = reflect(V, bumpWorld*abs(bumpWorld)); //bumpWorld calculation gives nice clear yet watery reflection
 				float3 refraction = refract(V, bumpWorld*abs(bumpWorld), 1.3333);
 			    float4 reflectedColor = texCUBE(cubeMap, -R);
-    			float4 refractedColor = texCUBE(cubeMap, refraction);
+    			float4 refractedColor = texCUBE(cubeMap, -refraction);
 
     			// Specular stuff
 				float3 reflection = reflect(bumpWorld, -light0Dir);
@@ -322,36 +327,46 @@ Shader "Custom/dx_11_ocean" {
 
 
 				// Initial color calculation
-				float reflectionCoefficient = fresnelCalculation(V, In.worldNormal);
-				float4 final = lerp(color, float4(reflectedColor.xyz, 1), reflectionCoefficient);
+				float reflectionCoefficient = fresnelCalculation(V, In.worldNormal, 0.2, 1, 5);
+				reflectedColor = sharpenColor(reflectedColor);
+				reflectedColor = desaturateColor(reflectedColor, 0.8, 25);
+				//color += float4(reflectedColor.xyz, 0.1);
+				//return float4(reflectedColor.xyz, 1);
+
+				/*float4 final = lerp(color, float4(reflectedColor.xyz, 1), reflectionCoefficient);
 				final *= abs(final);
 				//return final;
 				final.a *= waterDepthFactor;
-				float4 resultColor = final+color;
+				//float4 resultColor = final+color;
+				*/
+
+				float4 resultColor = color;
 				resultColor.a 	*= waterDepthFactor;
 				resultColor += specular;
+				resultColor = lerp(shallowColor, resultColor, pow(waterDepthFactor, 1.0/_DepthColorSwitch)); // Switching between surface & depth colors
+				//resultColor = desaturateColor(resultColor, 0.8, 0.8);
+				resultColor = lerp(resultColor, float4(reflectedColor.xyz, 1), reflectionCoefficient);
+				resultColor = desaturateColor(resultColor, 0.8, 1.2);
 
 				float fm 		= clamp(pow(foamTex, 2),0,1);
 				float4 topFoam = foamTex*_FoamStrength;
 				topFoam *= fm;
-				//topFoam.xyz *= _FoamStrength;
-				//topFoam.a *= foamMaskTex;
-				//topFoam.a *= foamMaskTex;
-				//topFoam.a *= waterDepthFactor;
+				//topFoam = sharpenColor(topFoam);
 
 				float4 heightMask 		= generateHeightMask(In.posWorld, -0.5, 2);
-				float waveHeightMask 	= generateHeightMask(In.posWorld, -2, 2);
-				//resultColor.a *= waveHeightMask;
-				resultColor = lerp(lerp(resultColor, shallowColor, waveHeightMask), min(4,topFoam), heightMask);
+				float waveHeightMask 	= generateHeightMask(In.posWorld, -1, 1);
+				//resultColor = lerp(lerp(resultColor, shallowColor, waveHeightMask), min(4,topFoam), heightMask); // Adding shallow color on top of waves
+				float4 water = lerp(lerp(resultColor, shallowColor, waveHeightMask), min(4,topFoam), heightMask); // Adding shallow color on top of waves
 
 				// changing alpha after master foam is added to sea
 				float4 shoreFoamTex = foamTex;
 				shoreFoamTex.a *= foamDepthFadeFactor;
-				//shoreFoamTex.a *= foamMaskTex*0.25;
 				shoreFoamTex*=_ShoreFoamStrength;
 
 				float depthColorSwitch = 4;
-				float4 water = lerp(shallowColor, resultColor, pow(waterDepthFactor, 1.0/_DepthColorSwitch)); // Switching between surface & depth colors
+				//float4 water = lerp(shallowColor, resultColor, pow(waterDepthFactor, 1.0/_DepthColorSwitch)); // Switching between surface & depth colors
+				//water = desaturateColor(water, 0.8, 0.2);
+				//water = lerp(water, float4(reflectedColor.xyz, 1), reflectionCoefficient);
 				water = lerp(shoreFoamTex, water, foamFadeFactor);
 				water.xyz *= diffLight;
 				return water;
