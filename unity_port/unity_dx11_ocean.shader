@@ -1,9 +1,4 @@
-﻿// Upgrade NOTE: replaced '_Object2World' with 'unity_ObjectToWorld'
-// Upgrade NOTE: replaced '_Object2World' with 'unity_ObjectToWorld'
-// Upgrade NOTE: replaced '_World2Object' with 'unity_WorldToObject'
-// Upgrade NOTE: replaced '_World2Object' with 'unity_WorldToObject'
-
-Shader "Custom/dx_11_ocean" {
+﻿Shader "Custom/dx_11_ocean" {
 	Properties {
 		// Unity inputs for shader params
 		deepColor 		("Deep Color", 	Color) 			= (1,1,1,1)
@@ -47,8 +42,11 @@ Shader "Custom/dx_11_ocean" {
 		[KeywordEnum(Carribean, North Sea, User)] _Environ("Ocean Env", 	int) = 0
 	}
 	SubShader {
-		Tags { "RenderType" = "Transparent" "Queue" = "Transparent" "IgnoreProjector"="True"}	
+		Tags { "RenderType" = "Transparent" "Queue" = "Transparent" "LightMode" = "ForwardBase" }
+		//Tags { "RenderType"="Opaque" "Queue"="Geometry+1" "LightMode" = "ForwardBase" }
 		//Blend SrcAlpha OneMinusSrcAlpha
+		//ZWrite Off
+
 
 		// Pass that renders the scene geometry into a texture
         GrabPass 
@@ -58,19 +56,21 @@ Shader "Custom/dx_11_ocean" {
         }
 		Pass{
 			Blend SrcAlpha OneMinusSrcAlpha  
-			//Tags { "RenderType" = "Transparent" "Queue" = "Transparent" }	
             //ZWrite Off
             //Cull Off
+            //ZTest Greater 
 			//Tags { "RenderType"="Opaque" }			
 					
 			CGPROGRAM
 			#pragma vertex vert
 			#pragma fragment frag
 			#pragma fragmentoption ARB_precision_hint_fastest
-			#pragma multi_compile
+			//#pragma multi_compile
+			#pragma multi_compile_fwdbase
 			#pragma debug
 			#include "UnityCG.cginc"
 			#include "common.cginc"
+			#include "AutoLight.cginc"
 
 			uniform sampler2D diffMap;
 			uniform sampler2D normalMap;
@@ -132,17 +132,18 @@ Shader "Custom/dx_11_ocean" {
 			// input from application 
 			struct app2vertex
 			{ 
-				float4 position			: POSITION;
+				float4 vertex			: POSITION;
 				float2 texCoord0		: TEXCOORD0;
 				float4 tangent			: TANGENT;
 				float3 normal			: NORMAL;
 				float4 color 			: COLOR; // Vertex color param. Must be in struct, must be called color
+				LIGHTING_COORDS(3,4)
 			}; 
 
 			// output to pixel shader 
 			struct vertex2frag
 			{ 
-			    float4 position    		: SV_POSITION;
+			    float4 pos    		: SV_POSITION;
 			   	float2 texCoord0		: TEXCOORD0;
 				float3 viewVec			: TEXCOORD1;
 				float3 worldNormal		: TEXCOORD2;
@@ -152,6 +153,7 @@ Shader "Custom/dx_11_ocean" {
 				float4 scrPos			: TEXCOORD6;
 				float4 uvRefr			: TEXCOORD7;
 				float2 texCoord1		: TEXCOORD8;
+				LIGHTING_COORDS(9,10)
 			};
 
 			struct extraTexCoords
@@ -159,7 +161,7 @@ Shader "Custom/dx_11_ocean" {
 				float2 foamTexCoords : TEXCOORD0;
 			};
 
-			vertex2frag vert(app2vertex In)
+			vertex2frag vert(app2vertex v)
 			{
 				amplitude *= 0.25;
 				waveLength *= 0.25;
@@ -170,8 +172,8 @@ Shader "Custom/dx_11_ocean" {
 				float3 sumT = float3(0,0,0);
 				float3 sumN = float3(0,0,0);
 				float2 dirsXY = float2(dirX, dirY);
-				//sumW = gerstnerWave(In.position, 	1, dirsXY, amplitude, waveLength, crestFactor, speed, _Time.y, 0);
-				float4 vColor = In.color;
+				//sumW = gerstnerWave(v.vertex, 	1, dirsXY, amplitude, waveLength, crestFactor, speed, _Time.y, 0);
+				float4 vColor = v.color;
 				float4 red = float4(1,0,0,1);
 				amplitude *= 1 - vColor.x*0.75; // 
 
@@ -182,13 +184,13 @@ Shader "Custom/dx_11_ocean" {
 					float2 dirsVal = dirsArray[i]*dirsXY;
 					float mulVal = mulArray[i]*2-1;//* customNoise(dirsVal);
 					//amplitude *= 0.25;
-					sumW += gerstnerWave(In.position, 		mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 0, waveArray[i], ampArray[i]);
+					sumW += gerstnerWave(v.vertex, 		mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 0, waveArray[i], ampArray[i]);
 					sumB += gerstnerWave(sumW, 				mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 1, waveArray[i], ampArray[i]);
 					sumT += gerstnerWave(sumW, 				mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 2, waveArray[i], ampArray[i]);
 					sumN += gerstnerWave(sumW, 				mulArray[i], dirsArray[i], amplitude, waveLength, crestFactor, speed, _Time.y, 3, waveArray[i], ampArray[i]);
 				}
 				// Calculate final pos, binorm, tangent and normal
-				In.position.xyz += sumW;
+				v.vertex.xyz += sumW;
 
 				sumB.x = 1-sumB.x;
 				sumB.z = -sumB.z;
@@ -201,36 +203,35 @@ Shader "Custom/dx_11_ocean" {
 				sumN.z = -sumN.z;
 
 				// _World2Object is Unity version of WorldInverseTranspose
-				Out.worldNormal = normalize(mul(unity_WorldToObject, In.normal+sumN).xyz);
-				//Out.worldNormal = normalize(mul(unity_WorldToObject, In.normal).xyz);
-				Out.worldTangent = normalize(mul(unity_ObjectToWorld, In.tangent).xyz);
-				Out.worldBinormal = normalize(cross(Out.worldNormal, Out.worldTangent*In.tangent.w)); // tangent.w is specific to Unity
+				Out.worldNormal = normalize(mul(unity_WorldToObject, v.normal+sumN).xyz);
+				Out.worldTangent = normalize(mul(unity_ObjectToWorld, v.tangent).xyz);
+				Out.worldBinormal = normalize(cross(Out.worldNormal, Out.worldTangent*v.tangent.w)); // tangent.w is specific to Unity
 				Out.worldBinormal += sumB;
 
 				// Final output position & screenposition
-				float4 worldSpacePos = mul(unity_ObjectToWorld, In.position);
+				float4 worldSpacePos = mul(unity_ObjectToWorld, v.vertex);
 				Out.posWorld = worldSpacePos;
-				Out.position = mul(UNITY_MATRIX_MVP, In.position);
-				Out.scrPos = ComputeScreenPos(Out.position);
-				//Out.scrPos.y = 1 - Out.scrPos.y;
+				Out.pos = mul(UNITY_MATRIX_MVP, v.vertex);
+				Out.scrPos = ComputeScreenPos(Out.pos);
 
-			    Out.texCoord0 = In.texCoord0;
-			    Out.texCoord1 = In.texCoord0;
+			    Out.texCoord0 = v.texCoord0;
+			    Out.texCoord1 = v.texCoord0;
 			    Out.texCoord0.y += _Time.y*timerScale1*0.05;
 			    Out.texCoord1.yx += _Time.y*timerScale1*0.05;
 
 				// From Unity built in function: _WorldSpaceCameraPos.xyz - mul(_Object2World, v).xyz;
-				Out.viewVec = WorldSpaceViewDir(In.position);
+				Out.viewVec = WorldSpaceViewDir(v.vertex);
 
-            	// Calculates the grab screen position
+            	// Calculates the grab screen pos
 	            #if UNITY_UV_STARTS_AT_TOP
             	float scale = -1.0;
             	#else
             	float scale = 1.0;
             	#endif
-            	Out.uvRefr.xy = (float2(Out.position.x, Out.position.y*scale) + Out.position.w) * 0.5;
-            	Out.uvRefr.zw = Out.position.zw;
+            	Out.uvRefr.xy = (float2(Out.pos.x, Out.pos.y*scale) + Out.pos.w) * 0.5;
+            	Out.uvRefr.zw = Out.pos.zw;
 
+            	TRANSFER_VERTEX_TO_FRAGMENT(Out);
 			    return Out;
 			}
 
@@ -251,20 +252,26 @@ Shader "Custom/dx_11_ocean" {
 				}
 
 	        	// Lighting
-	            float attenuation;
+	        	
+	            //float attenuation;
 	            float3 light0Dir;
+	            float attenuation = LIGHT_ATTENUATION(In);
+				float4 ambient = UNITY_LIGHTMODEL_AMBIENT * 2;
+				//return fixed4(1.0,0.0,0.0,1.0) + ambient * attenuation;
+
 				if (0.0 == _WorldSpaceLightPos0.w) // directional light
 				{
-					attenuation = 1.0;
+					//attenuation = 1.0;
 					light0Dir 	= normalize(_WorldSpaceLightPos0.xyz);
 				} 
 				else // point or spot light
 				{
 					float3 pixToLight 	= _WorldSpaceLightPos0.xyz - In.posWorld.xyz;
 					float distance 		= length(pixToLight);
-					attenuation 		= 1.0 / distance; // linear attenuation 
+					//attenuation 		= 1.0 / distance; // linear attenuation 
 					light0Dir 			= normalize(pixToLight);
 				}
+				
 
 				// Textures
 	        	float3x3 toWorld 	= float3x3(In.worldTangent, In.worldBinormal, In.worldNormal);
@@ -313,6 +320,7 @@ Shader "Custom/dx_11_ocean" {
 				specular *= specIntensity * _LightColor0;
 
 				float diffLight = attenuation * _LightColor0 * max(1, dot(surfaceBump, normalize(light0Dir)));
+				//return diffLight;
 
 
 				// Initial color calculation
@@ -321,6 +329,7 @@ Shader "Custom/dx_11_ocean" {
 				reflectedColor = desaturateColor(reflectedColor, 0.6, 25);
 				reflectedColor = float4(reflectedColor.xyz, 1);
 
+				// Gives a smooth and crisp color mask 
 				float4 waveHeightMask 	= generateHeightMask(In.posWorld, -1, 8);
 				waveHeightMask = clamp(min(float4(0.5,0.5,0.5,1), waveHeightMask), 0, 1);
 
@@ -328,18 +337,30 @@ Shader "Custom/dx_11_ocean" {
 				foamHeightMask = pow(waveHeightMask, 1-foamHeightMask*2);
 
 				float4 resultColor = deepColor;
-				resultColor += specular;
+				//resultColor += specular;
 				resultColor.a *= waterDepthFactor*1.5;
 				float fm 		= clamp(pow(foamTex, waveHeightMask),0,1);
 				float4 topFoam = foamTex*_FoamStrength;
 
-				topFoam = desaturateColor(topFoam, 0.8, 1.25);
+				float4 maskR = float4(foamMaskTex.r, foamMaskTex.r, foamMaskTex.r, 1);
+				float4 maskG = float4(foamMaskTex.g, foamMaskTex.g, foamMaskTex.g, 1);
+				float4 maskB = float4(foamMaskTex.b, foamMaskTex.b, foamMaskTex.b, 1);
+
+				topFoam = desaturateColor(topFoam, 0.8, 1.5);
 				topFoam.a *= 1-waveHeightMask.x;
+
 				float4 waveColor = lerp(resultColor, shallowColor, waveHeightMask.x);
-				resultColor = lerp(waveColor, topFoam, foamMaskTex*foamHeightMask*0.5);
+				//return waveColor;
+				float4 t = pow(foamHeightMask*maskB, 1-maskG*0.5);
+				//return t;
+				float4 a = foamHeightMask * maskB;
+				//resultColor = lerp(waveColor, topFoam, maskB*foamHeightMask*0.5);
+				resultColor = lerp(waveColor, topFoam, t);
+				
 				float4 water = lerp(lerp(shallowColor, resultColor, pow(waterDepthFactor, 1.0/_DepthColorSwitch)), reflectedColor, reflectionCoefficient);
 				water = sharpenColor(water);
 				water = desaturateColor(water, 0.9, 0.4);
+				water += specular;
 
 				// changing alpha after master foam is added to sea
 				float4 shoreFoamTex = foamTex;
@@ -347,15 +368,16 @@ Shader "Custom/dx_11_ocean" {
 
 				float depthColorSwitch = 4;
 				float4 f =  float4(constDepthFactor,constDepthFactor,constDepthFactor,1);
-				float4 shoreMask = pow(f, foamMaskTex + 1-foamFadeFactor);
+				//float4 shoreMask = pow(f, foamMaskTex + 1-foamFadeFactor);
+				float4 shoreMask = pow(f, maskG + 1-foamFadeFactor);
 				float4 surfaceWater = lerp(shoreFoamTex, water, shoreMask);
-				water = surfaceWater;
-				water.a *= depthFadeFactor;
-				water.xyz *= diffLight;
-				return water;
+				surfaceWater.a *= depthFadeFactor;
+				surfaceWater *= diffLight;
+				return surfaceWater;
 	        }
 			ENDCG
 		}
+
 	}
-	FallBack "Diffuse"
+	Fallback "VertexLit"
 }
